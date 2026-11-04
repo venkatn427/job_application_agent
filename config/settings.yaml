@@ -1,0 +1,128 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Application Agent — Settings
+# Edit this file to customize your job search.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Job Search ────────────────────────────────────────────────────────────────
+job_search:
+  # Search queries — what roles you're targeting
+  queries:
+    - "Senior Software Engineer"
+    - "Staff Engineer"
+    - "Senior Data Engineer"
+
+  # Target locations (use "Remote" for remote-only)
+  locations:
+    - "Remote"
+    - "San Francisco, CA"
+    - "New York, NY"
+
+  # Maximum jobs to fetch per source per query
+  max_per_source: 25
+
+  # Active job boards. Options: linkedin, indeed, greenhouse, lever
+  sources:
+    - linkedin
+    - indeed
+    - greenhouse
+    - lever
+
+  # Greenhouse company board slugs (from boards.greenhouse.io/<slug>)
+  # Example: stripe, airbnb, coinbase, databricks
+  greenhouse_companies:
+    - stripe
+    - airbnb
+    - databricks
+    - confluent
+    - figma
+
+  # Lever company slugs (from jobs.lever.co/<slug>)
+  lever_companies:
+    - netflix
+    - uber
+    - dropbox
+    - pinterest
+    - lyft
+
+# ── Candidate Matching ────────────────────────────────────────────────────────
+matching:
+  # Minimum score (1–100) to include a job in the pipeline
+  threshold: 70
+
+  # Use Claude for deep semantic analysis (adds up to 10 bonus points)
+  # Set false to run faster with keyword-only matching
+  use_claude_scoring: true
+
+# ── Resume Generation ──────────────────────────────────────────────────────────
+resume:
+  # Generate a cover letter for each matched job
+  generate_cover_letter: true
+
+  # Cover letter tone: professional | enthusiastic | concise
+  cover_letter_tone: professional
+
+  # Claude model for resume generation
+  # Options: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001
+  model: claude-sonnet-4-6
+
+# ── File Paths ────────────────────────────────────────────────────────────────
+paths:
+  # Base directory (relative to settings.yaml location)
+  base_dir: ..
+
+  # Your master resume file (PDF, DOCX, or TXT)
+  master_resume: data/master_resume/resume.pdf
+
+  # Optional LinkedIn profile export (download from LinkedIn → Settings → Data Export)
+  # Leave blank if not available
+  linkedin_export: null
+
+  # Where to save generated documents
+  output_dir: output
+
+  # Where to cache parsed profile data
+  data_dir: data
+
+  # Log files directory
+  log_dir: logs
+
+  # SQLite deduplication database
+  db_path: data/pipeline.db
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+notifications:
+  # Send Slack/email alert for each high-scoring match (≥85)
+  on_match: true
+
+  # Send summary after each pipeline run
+  on_run_complete: true
+
+# ── Scheduling ─────────────────────────────────────────────────────────────────
+scheduler:
+  # Run the pipeline daily at this time (24-hour format, local timezone)
+  daily_run_time: "08:00"
+
+  # Timezone for the scheduler
+  timezone: "America/Los_Angeles"
+
+  # Maximum concurrent jobs to process simultaneously
+  max_concurrent: 3
+
+# ── Filters (optional) ────────────────────────────────────────────────────────
+filters:
+  # Skip jobs with these words in the title (case-insensitive)
+  exclude_titles:
+    - intern
+    - contractor
+    - part-time
+
+  # Only include jobs with at least one of these words
+  required_keywords: []
+
+  # Minimum salary (USD/year), 0 = no filter
+  min_salary: 0
+
+  # Job types to include. Options: full-time, remote, contract, part-time
+  job_types:
+    - full-time
+    - remote

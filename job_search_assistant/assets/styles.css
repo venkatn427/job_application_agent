@@ -1,0 +1,248 @@
+/* ═══════════════════════════════════════════════════════
+   Job Search Assistant — Premium Dark UI
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Base & Reset ─────────────────────────────────────── */
+[data-testid="stAppViewContainer"] {
+    background: #0f1117;
+    color: #e2e8f0;
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a1d2e 0%, #16192a 100%);
+    border-right: 1px solid #2d3748;
+}
+
+[data-testid="stSidebar"] .stMarkdown h1,
+[data-testid="stSidebar"] .stMarkdown h2,
+[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #a78bfa;
+}
+
+/* ── Metric Cards ─────────────────────────────────────── */
+[data-testid="metric-container"] {
+    background: linear-gradient(135deg, #1e2235 0%, #252840 100%);
+    border: 1px solid #2d3748;
+    border-radius: 16px;
+    padding: 1.2rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-testid="metric-container"]:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 30px rgba(99,102,241,0.2);
+}
+
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    color: #94a3b8 !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #a78bfa !important;
+    font-size: 2.2rem !important;
+    font-weight: 700 !important;
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+.stButton > button {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0.6rem 1.4rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.25s ease;
+    box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+    width: 100%;
+}
+
+.stButton > button:hover {
+    background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(99,102,241,0.5);
+}
+
+.stButton > button:active {
+    transform: translateY(0);
+}
+
+/* ── Inputs ──────────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div > select {
+    background: #1e2235 !important;
+    color: #e2e8f0 !important;
+    border: 1px solid #374151 !important;
+    border-radius: 10px !important;
+    padding: 0.6rem 0.9rem !important;
+    transition: border-color 0.2s;
+}
+
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.2) !important;
+}
+
+/* ── File Uploader ────────────────────────────────────── */
+[data-testid="stFileUploader"] {
+    background: #1e2235;
+    border: 2px dashed #374151;
+    border-radius: 12px;
+    padding: 1rem;
+    transition: border-color 0.2s;
+}
+
+[data-testid="stFileUploader"]:hover {
+    border-color: #6366f1;
+}
+
+/* ── Tabs ────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: #1e2235;
+    border-radius: 12px;
+    padding: 4px;
+    gap: 4px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    color: #94a3b8;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    color: white !important;
+}
+
+/* ── Cards / Containers ───────────────────────────────── */
+.card {
+    background: linear-gradient(135deg, #1e2235 0%, #252840 100%);
+    border: 1px solid #2d3748;
+    border-radius: 16px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+
+/* ── Success / Warning / Error ────────────────────────── */
+.stSuccess {
+    background: rgba(16,185,129,0.12) !important;
+    border-left: 4px solid #10b981 !important;
+    border-radius: 8px !important;
+    color: #6ee7b7 !important;
+}
+
+.stWarning {
+    background: rgba(245,158,11,0.12) !important;
+    border-left: 4px solid #f59e0b !important;
+    border-radius: 8px !important;
+}
+
+.stError {
+    background: rgba(239,68,68,0.12) !important;
+    border-left: 4px solid #ef4444 !important;
+    border-radius: 8px !important;
+}
+
+.stInfo {
+    background: rgba(99,102,241,0.12) !important;
+    border-left: 4px solid #6366f1 !important;
+    border-radius: 8px !important;
+}
+
+/* ── Score Badge ──────────────────────────────────────── */
+.score-badge {
+    display: inline-block;
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.score-high  { background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; }
+.score-mid   { background: rgba(245,158,11,0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+.score-low   { background: rgba(239,68,68,0.2);  color: #ef4444; border: 1px solid #ef4444; }
+
+/* ── Page Title ───────────────────────────────────────── */
+.page-title {
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #a78bfa, #6366f1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.25rem;
+}
+
+.page-subtitle {
+    color: #64748b;
+    font-size: 0.95rem;
+    margin-bottom: 1.5rem;
+}
+
+/* ── Sidebar Logo ─────────────────────────────────────── */
+.sidebar-logo {
+    text-align: center;
+    padding: 1.5rem 0 1rem 0;
+    border-bottom: 1px solid #2d3748;
+    margin-bottom: 1rem;
+}
+
+.sidebar-logo h1 {
+    font-size: 1.4rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #a78bfa, #6366f1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin: 0;
+}
+
+.sidebar-logo p {
+    color: #64748b;
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+/* ── DataTable ────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* ── Keyword Tags ─────────────────────────────────────── */
+.keyword-tag {
+    display: inline-block;
+    background: rgba(99,102,241,0.15);
+    color: #a78bfa;
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 20px;
+    padding: 2px 10px;
+    font-size: 0.82rem;
+    margin: 2px;
+}
+
+.keyword-missing {
+    background: rgba(239,68,68,0.15);
+    color: #f87171;
+    border-color: rgba(239,68,68,0.3);
+}
+
+/* ── Scrollbar ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #1e2235; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+
+/* ── Divider ──────────────────────────────────────────── */
+hr {
+    border-color: #2d3748 !important;
+}

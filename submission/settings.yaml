@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dice Submission — Settings
+# Controls how the Playwright-MCP-driven submitter behaves.
+# ─────────────────────────────────────────────────────────────────────────────
+
+platform: dice
+
+# Safety: never click the final "Submit" without showing you the filled form first.
+# Strongly recommended to keep true until you trust the flow on your account.
+pause_before_submit: true
+
+# Dry run: fill everything but stop short of submitting (no application sent).
+dry_run: false
+
+# Max applications to submit in one session (rate-limit / sanity cap).
+max_applications_per_run: 5
+
+# Seconds to wait between applications (anti-spam, human-like pacing).
+delay_between_apps_seconds: 20
+
+# Job source for the submitter:
+#   dice_search  -> use the Dice search MCP to find fresh jobs
+#   matched_jobs -> read jobs already scored by the pipeline (output/matched_jobs.json)
+#   manual_urls  -> apply to the explicit list in `manual_urls` below
+job_source: dice_search
+
+# Search parameters when job_source = dice_search
+dice_search:
+  query: "Senior Data Engineer"
+  location: "Remote"
+  # Only target jobs that show Dice "Easy Apply" (skip external ATS redirects).
+  easy_apply_only: true
+  posted_within_days: 7
+
+# Explicit job URLs when job_source = manual_urls
+manual_urls: []
+
+# Skip a job if its title contains any of these (case-insensitive).
+exclude_titles:
+  - intern
+  - clearance required
+  - principal
+
+# Where the submitter records every application attempt.
+submissions_log: submission/submissions.json

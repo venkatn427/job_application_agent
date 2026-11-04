@@ -1,0 +1,49 @@
+# ── Secrets & credentials ─────────────────────────────────────────────────────
+.env
+submission/.secrets.env
+**/service_account.json
+**/*.json.key
+*.pem
+*.p12
+
+# ── Personal data (stays local) ───────────────────────────────────────────────
+submission/profile.json
+submission/submissions.json
+submission/dice_jobs_*.csv
+data/candidate_profile.json
+data/master_resume/
+data/*.db
+data/*.json
+
+# ── Generated output ──────────────────────────────────────────────────────────
+output/
+logs/
+scraped_jobs_raw.json
+jobs.db
+*.db
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Claude Code local settings ────────────────────────────────────────────────
+.claude/
+.mcp.json
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
