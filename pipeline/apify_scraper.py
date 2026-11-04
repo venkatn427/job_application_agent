@@ -323,6 +323,181 @@ class LeverScraper:
 # Unified scraper facade
 # ─────────────────────────────────────────────────────────────────────────────
 
+class DiceScraper:
+    """
+    Scrapes Dice.com using their public job search API.
+    No API key required. Filters to jobs posted today (postedDate=ONE).
+    """
+
+    _BASE = "https://job-search-api.svc.dhigroupinc.com/v1/dice/jobs/search"
+
+    def search(
+        self,
+        query: str,
+        location: str = "Remote",
+        max_results: int = 20,
+        easy_apply_only: bool = True,
+    ) -> list[JobListing]:
+        import urllib.parse
+        import urllib.request
+
+        params = {
+            "q": query,
+            "countryCode": "US",
+            "radius": "30",
+            "radiusUnit": "mi",
+            "page": "1",
+            "pageSize": str(min(max_results, 100)),
+            "filters.postedDate": "ONE",   # posted today
+            "language": "en",
+        }
+        if easy_apply_only:
+            params["filters.easyApply"] = "true"
+
+        url = self._BASE + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            logger.warning("Dice search failed for %r: %s", query, e)
+            return []
+
+        jobs = []
+        for item in data.get("data", []):
+            job_id = item.get("id") or item.get("jobId") or ""
+            apply_url = item.get("applyUrl") or item.get("jobDetailUrl") or \
+                        f"https://www.dice.com/job-detail/{job_id}"
+            jobs.append(JobListing(
+                job_id=f"dice_{job_id}",
+                title=item.get("title") or "",
+                company=item.get("companyName") or "",
+                location=item.get("locationName") or location,
+                description=item.get("descriptionFragment") or "",
+                apply_url=apply_url,
+                source="dice",
+                job_type=item.get("employmentType") or "",
+                requirements=[],
+            ))
+        logger.info("[dice] %d jobs for %r", len(jobs), query)
+        return jobs[:max_results]
+
+
+class RemoteOKScraper:
+    """
+    RemoteOK public API — no auth needed.
+    Returns remote tech jobs (tagged today).
+    """
+
+    _BASE = "https://remoteok.com/api"
+
+    def search(self, query: str = "", max_results: int = 20) -> list[JobListing]:
+        import urllib.request
+
+        req = urllib.request.Request(self._BASE, headers={
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            logger.warning("RemoteOK search failed: %s", e)
+            return []
+
+        jobs = []
+        query_lower = query.lower()
+        for item in data:
+            if not isinstance(item, dict) or "id" not in item:
+                continue
+            title = item.get("position") or ""
+            tags = " ".join(item.get("tags") or [])
+            if query_lower and query_lower not in title.lower() and query_lower not in tags.lower():
+                continue
+            jobs.append(JobListing(
+                job_id=f"remoteok_{item['id']}",
+                title=title,
+                company=item.get("company") or "",
+                location="Remote",
+                description=item.get("description") or "",
+                apply_url=item.get("url") or f"https://remoteok.com/remote-jobs/{item['id']}",
+                source="remoteok",
+                job_type="full-time",
+                requirements=[],
+            ))
+        logger.info("[remoteok] %d jobs for %r", len(jobs), query)
+        return jobs[:max_results]
+
+
+class WellfoundScraper:
+    """
+    Wellfound (AngelList) startup jobs — requires login; returns empty without it.
+    Jobs can be browsed at wellfound.com/jobs but have no unauthenticated API.
+    Included here as a placeholder; use Playwright apply flow for Wellfound URLs.
+    """
+
+    def search(self, query: str, max_results: int = 20) -> list[JobListing]:
+        # Wellfound has no public unauthenticated job search API.
+        # Jobs scraped via Apify actor 'maxcopell/wellfound' if APIFY_API_TOKEN is set.
+        return []
+
+
+class USAJobsScraper:
+    """
+    USAJobs (US federal jobs) public API — no key needed for basic search.
+    Set USAJOBS_API_KEY and USAJOBS_USER_AGENT in .env for full access.
+    """
+
+    _BASE = "https://data.usajobs.gov/api/search"
+
+    def search(self, query: str, max_results: int = 10) -> list[JobListing]:
+        import urllib.parse
+        import urllib.request
+
+        api_key = os.environ.get("USAJOBS_API_KEY", "")
+        user_agent = os.environ.get("USAJOBS_USER_AGENT", "jobapp@example.com")
+        if not api_key:
+            return []   # USAJobs requires a key; skip silently
+
+        params = {
+            "Keyword": query,
+            "ResultsPerPage": str(min(max_results, 25)),
+            "DatePosted": "1",
+        }
+        url = self._BASE + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "Host": "data.usajobs.gov",
+            "User-Agent": user_agent,
+            "Authorization-Key": api_key,
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            logger.warning("USAJobs search failed for %r: %s", query, e)
+            return []
+
+        jobs = []
+        for item in data.get("SearchResult", {}).get("SearchResultItems", []):
+            m = item.get("MatchedObjectDescriptor", {})
+            jobs.append(JobListing(
+                job_id=f"usajobs_{m.get('PositionID', '')}",
+                title=m.get("PositionTitle") or "",
+                company=m.get("OrganizationName") or "US Government",
+                location=(m.get("PositionLocation") or [{}])[0].get("LocationName") or "",
+                description=m.get("QualificationSummary") or "",
+                apply_url=m.get("PositionURI") or "",
+                source="usajobs",
+                job_type="full-time",
+                requirements=[],
+            ))
+        logger.info("[usajobs] %d jobs for %r", len(jobs), query)
+        return jobs[:max_results]
+
+
 class JobFetcher:
     """
     Coordinates all job board scrapers and returns a deduplicated list.
@@ -341,6 +516,10 @@ class JobFetcher:
         self.indeed = IndeedApifyScraper(self.client)
         self.greenhouse = GreenhouseScraper()
         self.lever = LeverScraper()
+        self.dice = DiceScraper()
+        self.remoteok = RemoteOKScraper()
+        self.wellfound = WellfoundScraper()
+        self.usajobs = USAJobsScraper()
         self._seen: set[str] = set()
 
     def fetch_all(
@@ -358,7 +537,8 @@ class JobFetcher:
         sources: subset of ['linkedin','indeed','greenhouse','lever'] or None for all
         exclude_titles: words that, if found in a job title, cause it to be dropped
         """
-        all_sources = sources or ["linkedin", "indeed", "greenhouse", "lever"]
+        all_sources = sources or ["linkedin", "indeed", "greenhouse", "lever",
+                                  "dice", "remoteok", "wellfound", "usajobs"]
         locations = locations or ["Remote"]
         greenhouse_companies = greenhouse_companies or []
         lever_companies = lever_companies or []
@@ -400,6 +580,42 @@ class JobFetcher:
                     logger.info("Lever: +%d jobs", len(jobs))
                 except Exception as e:
                     logger.error("Lever scrape failed: %s", e)
+
+        if "dice" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.dice.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("Dice: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("Dice scrape failed: %s", e)
+
+        if "remoteok" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.remoteok.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("RemoteOK: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("RemoteOK scrape failed: %s", e)
+
+        if "wellfound" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.wellfound.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("Wellfound: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("Wellfound scrape failed: %s", e)
+
+        if "usajobs" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.usajobs.search(query, max_results=10)
+                    results.extend(self._dedup(jobs))
+                    logger.info("USAJobs: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("USAJobs scrape failed: %s", e)
 
         # Apply title exclusion filter
         if _exclude:

@@ -34,16 +34,19 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PLATFORM_PATTERNS = {
-    "greenhouse":   ["boards.greenhouse.io", "greenhouse.io/apply"],
-    "lever":        ["jobs.lever.co", "lever.co/"],
-    "workday":      ["myworkdayjobs.com", "workday.com"],
-    "linkedin":     ["linkedin.com/jobs", "linkedin.com/apply"],
-    "indeed":       ["indeed.com/apply", "indeed.com/viewjob"],
-    "icims":        ["icims.com"],
+    "greenhouse":      ["boards.greenhouse.io", "greenhouse.io/apply"],
+    "lever":           ["jobs.lever.co", "lever.co/"],
+    "workday":         ["myworkdayjobs.com", "workday.com"],
+    "linkedin":        ["linkedin.com/jobs", "linkedin.com/apply"],
+    "indeed":          ["indeed.com/apply", "indeed.com/viewjob"],
+    "dice":            ["dice.com/job-detail", "dice.com/jobs"],
+    "icims":           ["icims.com"],
     "smartrecruiters": ["smartrecruiters.com"],
-    "jobvite":      ["jobs.jobvite.com", "jobvite.com"],
-    "taleo":        ["taleo.net"],
-    "ashby":        ["jobs.ashbyhq.com", "ashbyhq.com"],
+    "jobvite":         ["jobs.jobvite.com", "jobvite.com"],
+    "taleo":           ["taleo.net"],
+    "ashby":           ["jobs.ashbyhq.com", "ashbyhq.com"],
+    "wellfound":       ["wellfound.com/jobs", "angel.co/jobs"],
+    "ziprecruiter":    ["ziprecruiter.com/jobs", "ziprecruiter.com/c/"],
 }
 
 
@@ -228,7 +231,7 @@ class _LeverApplier:
 
 
 class _LinkedInApplier:
-    """Apply via LinkedIn Easy Apply (requires login)."""
+    """Apply via LinkedIn Easy Apply (creates account if needed)."""
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
@@ -237,9 +240,16 @@ class _LinkedInApplier:
             logger.error("LinkedIn credentials not found in secrets file")
             return False
 
-        # Login if not already logged in
+        # Login or create account if needed
         if "linkedin.com/login" in page.url or "linkedin.com/checkpoint" in page.url:
             self._login(page, email, password)
+        elif not self._is_logged_in(page):
+            page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+            _human_delay(1000, 2000)
+            # Try login; if account not found, create one
+            if not self._login(page, email, password):
+                logger.info("LinkedIn login failed — attempting account creation")
+                self._create_account(page, profile, email, password, creds)
 
         # Click Easy Apply
         try:
@@ -265,14 +275,59 @@ class _LinkedInApplier:
 
         return False
 
-    def _login(self, page, email: str, password: str) -> None:
-        page.fill("#username", email)
-        _human_delay(300, 700)
-        page.fill("#password", password)
-        _human_delay(300, 700)
-        page.click("button[type='submit']")
-        page.wait_for_load_state("networkidle", timeout=15_000)
-        _human_delay(1000, 2000)
+    def _is_logged_in(self, page) -> bool:
+        try:
+            page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded",
+                      timeout=10_000)
+            _human_delay(500, 1000)
+            return "feed" in page.url or "mynetwork" in page.url
+        except Exception:
+            return False
+
+    def _login(self, page, email: str, password: str) -> bool:
+        """Returns True on success."""
+        try:
+            page.fill("#username", email)
+            _human_delay(300, 700)
+            page.fill("#password", password)
+            _human_delay(300, 700)
+            page.click("button[type='submit']")
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            _human_delay(1000, 2000)
+            # Success if redirected away from login
+            return "login" not in page.url and "checkpoint" not in page.url
+        except Exception as e:
+            logger.warning("LinkedIn login attempt failed: %s", e)
+            return False
+
+    def _create_account(self, page, profile: dict, email: str, password: str,
+                        creds: dict) -> None:
+        """Create a new LinkedIn account."""
+        try:
+            page.goto("https://www.linkedin.com/signup", wait_until="domcontentloaded")
+            _human_delay(1000, 2000)
+            # Email
+            page.fill("input[name='email'], #email-or-phone", email)
+            _human_delay(400, 800)
+            page.click("button[type='submit'], .sign-in-form__submit-btn")
+            _human_delay(800, 1500)
+            # Password
+            page.fill("input[name='password'], #password", password)
+            _human_delay(300, 600)
+            page.click("button[type='submit']")
+            _human_delay(800, 1500)
+            # First / last name
+            first = (profile.get("name") or "").split()[0]
+            last = " ".join((profile.get("name") or "").split()[1:])
+            page.fill("input[name='firstName'], #first-name", first)
+            _human_delay(200, 500)
+            page.fill("input[name='lastName'], #last-name", last)
+            _human_delay(200, 500)
+            page.click("button[type='submit']")
+            _human_delay(1000, 2000)
+            logger.info("LinkedIn account creation initiated for %s", email)
+        except Exception as e:
+            logger.error("LinkedIn account creation failed: %s", e)
 
     def _fill_step(self, page, profile: dict, resume_path: Optional[Path]) -> None:
         # Phone
@@ -348,6 +403,133 @@ class _LinkedInApplier:
         return False
 
 
+class _IndeedApplier:
+    """Apply via Indeed — creates or logs into an Indeed account, then applies."""
+
+    def apply(self, page, profile: dict, resume_path: Optional[Path],
+              cover_letter_path: Optional[Path], creds: dict) -> bool:
+        email, password = _get_login(creds, "indeed")
+        if not email or not password:
+            logger.warning("Indeed credentials not set — trying guest apply")
+        else:
+            self._ensure_logged_in(page, profile, email, password)
+
+        # Click Apply / Continue to apply
+        try:
+            page.wait_for_selector(
+                "button[id*='apply'], a[id*='applyButton'], button[aria-label*='Apply']",
+                timeout=10_000,
+            )
+            page.click("button[id*='apply'], a[id*='applyButton'], button[aria-label*='Apply']")
+            _human_delay(1000, 2000)
+        except Exception:
+            pass
+
+        # Walk multi-step form (up to 8 steps)
+        for _ in range(8):
+            self._fill_step(page, profile, resume_path)
+            _human_delay(500, 1000)
+            if self._try_submit(page):
+                return True
+            if not self._try_next(page):
+                break
+        return False
+
+    def _ensure_logged_in(self, page, profile: dict, email: str, password: str) -> None:
+        try:
+            page.goto("https://secure.indeed.com/account/login",
+                      wait_until="domcontentloaded", timeout=15_000)
+            _human_delay(800, 1500)
+
+            # Try sign in
+            page.fill("input[name='__email'], input[type='email']", email)
+            _human_delay(300, 600)
+            next_btn = page.query_selector("button[type='submit'], #login-submit-button")
+            if next_btn:
+                next_btn.click()
+                _human_delay(800, 1500)
+
+            pwd_field = page.query_selector("input[type='password'], input[name='__password']")
+            if pwd_field:
+                pwd_field.fill(password)
+                _human_delay(300, 600)
+                page.click("button[type='submit'], #login-submit-button")
+                _human_delay(1000, 2000)
+                if "login" not in page.url:
+                    logger.info("Indeed login successful")
+                    return
+
+            # Login failed — try account creation
+            logger.info("Indeed login failed — attempting account creation")
+            self._create_account(page, profile, email, password)
+        except Exception as e:
+            logger.warning("Indeed login/create failed: %s", e)
+
+    def _create_account(self, page, profile: dict, email: str, password: str) -> None:
+        try:
+            page.goto("https://secure.indeed.com/account/register",
+                      wait_until="domcontentloaded", timeout=15_000)
+            _human_delay(800, 1500)
+            page.fill("input[name='__email'], input[type='email']", email)
+            _human_delay(300, 600)
+            page.fill("input[name='__password'], input[type='password']", password)
+            _human_delay(300, 600)
+            page.click("button[type='submit']")
+            _human_delay(1000, 2000)
+            logger.info("Indeed account creation attempted for %s", email)
+        except Exception as e:
+            logger.error("Indeed account creation failed: %s", e)
+
+    def _fill_step(self, page, profile: dict, resume_path: Optional[Path]) -> None:
+        for attr in ("name", "id", "placeholder"):
+            for fragment, key in [
+                ("phone", "phone"), ("city", "location"),
+                ("first", "first_name"), ("last", "last_name"),
+            ]:
+                val = profile.get(key) or profile.get("name", "")
+                if key in ("first_name", "last_name"):
+                    parts = (profile.get("name") or "").split()
+                    val = parts[0] if key == "first_name" else " ".join(parts[1:])
+                try:
+                    el = page.query_selector(f"input[{attr}*='{fragment}' i]")
+                    if el and not el.input_value():
+                        el.fill(val)
+                        _human_delay(100, 300)
+                except Exception:
+                    pass
+
+        if resume_path and resume_path.exists():
+            try:
+                page.set_input_files("input[type='file']", str(resume_path))
+                _human_delay(600, 1200)
+            except Exception:
+                pass
+
+    def _try_next(self, page) -> bool:
+        for label in ("Continue", "Next", "Save and continue"):
+            try:
+                btn = page.query_selector(f"button:has-text('{label}')")
+                if btn:
+                    btn.click()
+                    _human_delay(500, 1000)
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _try_submit(self, page) -> bool:
+        for label in ("Submit your application", "Submit application", "Apply"):
+            try:
+                btn = page.query_selector(f"button:has-text('{label}')")
+                if btn:
+                    btn.click()
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+                    return True
+            except Exception:
+                pass
+        return False
+
+
 class _GenericApplier:
     """
     Best-effort filler for any form.
@@ -411,10 +593,77 @@ class _GenericApplier:
             return False
 
 
+class _DiceApplier:
+    """
+    Dice Easy Apply — delegates to the existing submitter.py logic which
+    reads profile.json and answers all screening questions correctly.
+    """
+
+    def apply(self, page, profile: dict, resume_path: Optional[Path],
+              cover_letter_path: Optional[Path], creds: dict) -> bool:
+        from pathlib import Path as _Path
+        import sys, os
+
+        # submitter.py path
+        sub_dir = _Path(__file__).parent
+        if str(sub_dir) not in sys.path:
+            sys.path.insert(0, str(sub_dir))
+
+        try:
+            from submitter import DiceSubmitter
+            submitter = DiceSubmitter(profile_path=str(sub_dir / "profile.json"))
+            return submitter.apply(page=page, resume_path=resume_path)
+        except Exception as e:
+            logger.error("Dice submitter error: %s — falling back to generic", e)
+            return _GenericApplier().apply(page, profile, resume_path,
+                                           cover_letter_path, creds)
+
+
+class _ZipRecruiterApplier:
+    """ZipRecruiter one-click apply (requires login)."""
+
+    def apply(self, page, profile: dict, resume_path: Optional[Path],
+              cover_letter_path: Optional[Path], creds: dict) -> bool:
+        email, password = _get_login(creds, "ziprecruiter")
+        if not email:
+            email, password = _get_login(creds, "generic")
+
+        # Login if credentials available
+        if email and password:
+            try:
+                current = page.url
+                page.goto("https://www.ziprecruiter.com/login",
+                          wait_until="domcontentloaded", timeout=15_000)
+                _human_delay(800, 1500)
+                page.fill("input[name='email'], input[type='email']", email)
+                _human_delay(200, 500)
+                page.fill("input[name='password'], input[type='password']", password)
+                _human_delay(200, 500)
+                page.click("button[type='submit']")
+                _human_delay(1000, 2000)
+                page.goto(current, wait_until="domcontentloaded", timeout=15_000)
+                _human_delay(800, 1500)
+            except Exception as e:
+                logger.warning("ZipRecruiter login failed: %s", e)
+
+        # Apply button
+        try:
+            page.click("a[data-testid*='apply'], button[data-testid*='apply'], "
+                       "a.apply_button, button.apply_button")
+            _human_delay(800, 1500)
+        except Exception:
+            pass
+
+        return _GenericApplier().apply(page, profile, resume_path, cover_letter_path, creds)
+
+
 _PLATFORM_APPLIERS = {
     "greenhouse":      _GreenhouseApplier(),
     "lever":           _LeverApplier(),
     "linkedin":        _LinkedInApplier(),
+    "indeed":          _IndeedApplier(),
+    "dice":            _DiceApplier(),
+    "ziprecruiter":    _ZipRecruiterApplier(),
     "generic":         _GenericApplier(),
 }
 
