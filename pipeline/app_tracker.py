@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS applications (
     salary_currency TEXT NOT NULL DEFAULT 'USD',
     job_type        TEXT,                           -- full-time, contract, etc.
     match_score     INTEGER,
-    status          TEXT NOT NULL DEFAULT 'applied',
+    status          TEXT NOT NULL DEFAULT 'prepared',
     -- status values: applied, phone_screen, technical, onsite, offer,
     --                rejected, withdrawn, ghosted, accepted
     applied_at      TEXT,
@@ -158,6 +158,7 @@ class AppTracker:
     def _conn(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
         try:
             yield conn
             conn.commit()
@@ -201,7 +202,7 @@ class AppTracker:
         ats_keywords: Optional[list] = None,
     ) -> int:
         """
-        Record a new application from a JobListing.
+        Record a prepared application from a JobListing, not a submission.
         Returns the new application ID.
         """
         import json as _json
@@ -225,7 +226,7 @@ class AppTracker:
                 (
                     company_id,
                     job.title or "",
-                    getattr(job, "url", "") or "",
+                    getattr(job, "apply_url", "") or getattr(job, "url", "") or "",
                     getattr(job, "source", "") or "",
                     job.location or "",
                     1 if (job.location or "").lower() in ("remote", "anywhere") else 0,
@@ -233,8 +234,8 @@ class AppTracker:
                     getattr(job, "salary_max", None),
                     getattr(job, "job_type", None),
                     match_score,
-                    "applied",
-                    datetime.now().isoformat(),
+                    "prepared",
+                    None,
                     (job.description or "")[:500],
                     0,
                 ),
@@ -262,18 +263,21 @@ class AppTracker:
                      drive_links.get("Cover Letter", "")),
                 )
 
-            # Auto follow-up: send thank-you / follow-up after 1 week
-            conn.execute(
-                "INSERT INTO follow_ups (application_id,action,due_at) VALUES (?,?,datetime('now','+7 days'))",
-                (app_id, "follow_up_email"),
-            )
-
         logger.info("Tracked application #%d: %s @ %s (score=%d)",
                     app_id, job.title, job.company, match_score)
         return app_id
 
     def update_status(self, app_id: int, status: str, note: Optional[str] = None) -> None:
         with self._conn() as conn:
+            if status == "applied":
+                row = conn.execute("SELECT applied_at FROM applications WHERE id=?", (app_id,)).fetchone()
+                if row is not None and row["applied_at"] is None:
+                    conn.execute("UPDATE applications SET applied_at=? WHERE id=?",
+                                 (datetime.now().isoformat(), app_id))
+                    conn.execute(
+                        "INSERT INTO follow_ups (application_id,action,due_at) VALUES (?,?,datetime('now','+7 days'))",
+                        (app_id, "follow_up_email"),
+                    )
             conn.execute(
                 "UPDATE applications SET status=?, updated_at=datetime('now') WHERE id=?",
                 (status, app_id),
@@ -428,7 +432,8 @@ class AppTracker:
         with self._conn() as conn:
             row = conn.execute(
                 """SELECT
-                       COUNT(*) as total,
+                       SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) as total,
+                       SUM(CASE WHEN status='prepared' THEN 1 ELSE 0 END) as prepared,
                        SUM(CASE WHEN status='applied' THEN 1 ELSE 0 END) as applied,
                        SUM(CASE WHEN status IN ('phone_screen','technical','onsite') THEN 1 ELSE 0 END) as in_progress,
                        SUM(CASE WHEN status='offer' THEN 1 ELSE 0 END) as offers,

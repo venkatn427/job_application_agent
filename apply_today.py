@@ -101,6 +101,7 @@ def _scrape_today(queries: list[str]) -> list:
     from pipeline.apify_scraper import (
         GreenhouseScraper, LeverScraper, DiceScraper,
         RemoteOKScraper, USAJobsScraper,
+        WeWorkRemotelyScraper, TheMuseScraper, ZipRecruiterScraper,
     )
 
     settings = _load_settings()
@@ -161,6 +162,36 @@ def _scrape_today(queries: list[str]) -> list:
                 logger.info("[USAJobs] %d jobs for %r", len(jobs), q)
         except Exception as e:
             logger.warning("USAJobs scrape failed for %r: %s", q, e)
+
+    # ── We Work Remotely (RSS, free) ─────────────────────────────────────────
+    for q in queries:
+        try:
+            jobs = WeWorkRemotelyScraper().search(q, max_results=20)
+            all_jobs.extend(jobs)
+            if jobs:
+                logger.info("[WeWorkRemotely] %d jobs for %r", len(jobs), q)
+        except Exception as e:
+            logger.warning("WeWorkRemotely scrape failed for %r: %s", q, e)
+
+    # ── The Muse (public REST, free) ─────────────────────────────────────────
+    for q in queries:
+        try:
+            jobs = TheMuseScraper().search(q, max_results=20)
+            all_jobs.extend(jobs)
+            if jobs:
+                logger.info("[TheMuse] %d jobs for %r", len(jobs), q)
+        except Exception as e:
+            logger.warning("TheMuse scrape failed for %r: %s", q, e)
+
+    # ── ZipRecruiter (search API, free) ──────────────────────────────────────
+    for q in queries:
+        try:
+            jobs = ZipRecruiterScraper().search(q, max_results=20)
+            all_jobs.extend(jobs)
+            if jobs:
+                logger.info("[ZipRecruiter] %d jobs for %r", len(jobs), q)
+        except Exception as e:
+            logger.warning("ZipRecruiter scrape failed for %r: %s", q, e)
 
     # ── Apify (LinkedIn + Indeed) if token is set ──────────────────────────────
     if os.environ.get("APIFY_API_TOKEN"):
@@ -351,6 +382,7 @@ def main():
             credentials_path=creds_path,
             headless=True,
             dry_run=False,
+            submission_approved=True,  # Explicit interactive confirmation above.
         )
         applier._profile = {
             "name": submission_profile.get("personal", {}).get("first_name", "") + " " +

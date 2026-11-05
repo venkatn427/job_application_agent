@@ -243,6 +243,7 @@ class Pipeline:
         """Execute the full pipeline. Returns a run summary."""
         import time
         start = time.monotonic()
+        self._errors = []
         run_date = datetime.now().strftime("%Y-%m-%d")
         logger.info("=" * 60)
         logger.info("Pipeline run started: %s", run_date)
@@ -252,8 +253,8 @@ class Pipeline:
 
         # Step 1: Load candidate profile
         profile = self._load_profile(force_profile_refresh)
-        if not profile.name:
-            logger.warning("Profile loaded but name is empty — check resume path")
+        if not profile.name or not (profile.skills_flat() or profile.work_experience):
+            raise ValueError("Candidate profile must contain a name and skills or work experience before scoring")
 
         # Step 2: Fetch jobs
         jobs = self._fetch_jobs()

@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Code-reviewed solution architecture, processing flows, developer reference and operational guide for Job Application Agent.">
+<title>Job Application Agent | Solution Design &amp; Developer Guide</title>
+<style>
+:root{--ink:#202622;--muted:#58635d;--line:#dce3df;--accent:#176b4b;--paper:#fff;--wash:#f4f7f5;--warn:#9b372d}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}a{color:var(--accent);text-underline-offset:3px}header{border-bottom:1px solid var(--line);padding:48px max(24px,calc((100vw - 1300px)/2));background:var(--wash)}header p{max-width:850px}h1{font-size:36px;line-height:1.2;margin:12px 0}h2{font-size:26px;line-height:1.3;margin:0 0 18px}h3{font-size:19px;margin:26px 0 10px}p{margin:10px 0 18px}.eyebrow{color:var(--accent);font-size:13px;font-weight:700;text-transform:uppercase}.meta{color:var(--muted);font-size:14px}.layout{display:grid;grid-template-columns:240px minmax(0,1fr);max-width:1348px;margin:auto;gap:44px;padding:32px 24px 72px}nav{position:sticky;top:20px;align-self:start;max-height:calc(100vh - 40px);overflow:auto;font-size:14px}nav a{display:block;padding:6px 0;text-decoration:none;color:var(--muted)}nav a:hover{color:var(--accent);text-decoration:underline}nav strong{display:block;padding-bottom:10px}main{min-width:0}section{padding:12px 0 34px;margin-bottom:24px;border-bottom:1px solid var(--line)}table{width:100%;border-collapse:collapse;font-size:14px;margin:18px 0}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{background:var(--wash);font-weight:650}.table-wrap{overflow-x:auto}code{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}pre{background:#f1f4f2;border:1px solid var(--line);border-radius:4px;padding:18px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}pre code{font-size:13px}.note{border-left:4px solid var(--accent);padding:12px 18px;background:var(--wash);margin:20px 0}.risk{border-left-color:var(--warn)}.tag{font-size:12px;font-weight:700;color:var(--warn)}.flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:24px 0;list-style:none;padding:0;counter-reset:flow}.flow li{counter-increment:flow;border:1px solid var(--line);border-top:3px solid var(--accent);padding:16px;border-radius:4px}.flow li:before{content:counter(flow,decimal-leading-zero);display:block;color:var(--accent);font:700 13px ui-monospace,monospace;margin-bottom:8px}.flow b{display:block;font-size:15px}.flow span{font-size:13px;color:var(--muted)}.finding{padding:18px 0;border-bottom:1px solid var(--line)}.finding h3{margin-top:0}.finding p{margin-bottom:8px}.refs{font-size:13px;color:var(--muted)}footer{font-size:13px;color:var(--muted);padding-top:12px}button{border:1px solid var(--line);background:white;padding:8px 12px;border-radius:4px;cursor:pointer;color:var(--ink)}button:focus-visible,a:focus-visible{outline:3px solid #62b791;outline-offset:3px}@media(max-width:900px){.layout{grid-template-columns:1fr;gap:20px}nav{position:static;max-height:none;columns:2}nav strong{column-span:all}.flow{grid-template-columns:repeat(2,minmax(0,1fr))}header{padding:32px 24px}h1{font-size:30px}}@media(max-width:500px){.flow{grid-template-columns:1fr}.layout{padding:24px 16px}th,td{padding:9px}h1{font-size:27px}}@media print{nav,button{display:none}.layout{display:block;padding:0}header{padding:20px 0;background:white}body{font-size:10pt}h1{font-size:25pt}h2{font-size:17pt}section{break-before:auto}.flow li,tr,.finding{break-inside:avoid}pre{font-size:9pt}a{color:inherit}main{width:100%}}
+</style>
+</head>
+<body>
+<header>
+<div class="eyebrow">Engineering Reference / Revision 1.1</div>
+<h1>Job Application Agent</h1>
+<p>Solution design and developer documentation for job discovery, candidate matching, resume preparation, application tracking, and optional browser-based submission.</p>
+<p class="meta">Reviewed: November 5, 2026 &middot; Workspace: <code>/Users/venkatn/job_application_agent</code><br>Evidence: repository source inspection, Python syntax compilation, and an isolated tracker database probe. Not a live integration certification.</p>
+<button onclick="window.print()" aria-label="Print or save this document as PDF">Print / Save PDF</button>
+</header>
+<div class="layout">
+<nav aria-label="Table of contents"><strong>Contents</strong>
+<a href="#overview">01 &middot; Scope &amp; Status</a><a href="#architecture">02 &middot; Architecture</a><a href="#flows">03 &middot; Processing Flows</a><a href="#models">04 &middot; Data &amp; Storage</a><a href="#matching">05 &middot; Matching &amp; AI</a><a href="#integrations">06 &middot; Integrations</a><a href="#api">07 &middot; API Reference</a><a href="#setup">08 &middot; Developer Setup</a><a href="#operations">09 &middot; Operations</a><a href="#security">10 &middot; Security</a><a href="#review">11 &middot; Code Review</a><a href="#testing">12 &middot; Verification</a><a href="#extension">13 &middot; Extension Guide</a><a href="#roadmap">14 &middot; Target Design</a><a href="#sources">15 &middot; Source Index</a>
+</nav>
+<main>
+<section id="overview"><h2>01 / Scope &amp; Status</h2>
+<div class="note"><strong>Revision 1.1 implementation update:</strong> the original review snapshot below is retained for traceability. Preparation now creates <code>prepared</code> records without applied timestamps or follow-ups; canonical job URLs are preserved. Live AutoApplier calls require explicit approval, default to dry-run, and the dashboard asks for confirmation. API dry-runs skip upstream preparation. Dashboard preparation uses JobListing and returns an error if no resume exists. Empty profiles stop the batch pipeline. Partial key updates preserve existing keys using atomic mode-0600 writes. Flask is restricted to loopback/same-origin JSON requests with debug disabled; this is local hardening, not multi-user authentication. Foreign keys are enabled per tracker connection. These changes have offline regression coverage in <code>tests/test_safety_regressions.py</code>. Historical records are not automatically relabeled; review legacy applied records manually.</div>
+<p>The repository is a local-first Python application with multiple entry points, not a single unified service. The batch pipeline prepares application packages. Separate Flask and CLI paths support tracking and browser-based submission. A second Streamlit application and MCP tools coexist with these paths.</p>
+<div class="note risk"><strong>Readiness assessment:</strong> suitable for supervised local development, with production blockers around submission consent, tracking accuracy, endpoint protection, retries, and shared data contracts. Earlier smoke-test pass counts do not establish end-to-end correctness.</div>
+<div class="table-wrap"><table><thead><tr><th>Capability</th><th>Implemented State</th><th>Boundary / Gap</th></tr></thead><tbody>
+<tr><td>Job discovery</td><td>Apify LinkedIn/Indeed; direct board adapters</td><td>Not every adapter is functional; source failures can look like empty results.</td></tr>
+<tr><td>Candidate profile</td><td>PDF, DOCX, TXT extraction; optional local LinkedIn export; Claude parsing and cache</td><td>No direct LinkedIn profile sync or Google Drive portfolio ingestion in the main pipeline.</td></tr>
+<tr><td>Compatibility</td><td>Weighted heuristic score plus optional Claude bonus</td><td>Heuristic relevance estimate, not an ATS pass probability.</td></tr>
+<tr><td>Resume package</td><td>PDF, DOCX, optional cover letter; match analysis</td><td>Factual accuracy and page count are prompt guidance, not verified guarantees.</td></tr>
+<tr><td>Cloud storage</td><td>Optional Google Drive upload; Sheets plus CSV tracking</td><td>Spreadsheet ID must already be configured; main flow does not create one.</td></tr>
+<tr><td>Submission</td><td>Separate platform-specific Playwright appliers</td><td>Not invoked by <code>Pipeline.run()</code>; no shared persistent application state machine.</td></tr>
+<tr><td>Daily / weekly</td><td>APScheduler pipeline run and weekly analytics</td><td>Requires a running process; resume performance attribution is not implemented.</td></tr>
+</tbody></table></div></section>
+<section id="architecture"><h2>02 / Architecture</h2>
+<pre aria-label="System architecture"><code>ENTRY POINTS
+  main.py / scheduler.py       api_server.py + static/dashboard.html
+             |                          |                  |
+             v                          v                  v
+  pipeline/workflow.py          preparation / tracker    apply task thread
+             |                          |                  |
+  +----------+----------+       AppTracker             ResumeAdapter
+  | ProfileAnalyzer     |       data/applications.db       |
+  | JobFetcher          |                            AutoApplier
+  | JobMatcher          |                                  |
+  | ResumeGenerator     |                            Playwright / portals
+  | document_builder    |
+  +----------+----------+
+             |
+  local output + PipelineDB + SheetsTracker + DriveManager + Notifier
+
+PARALLEL / LEGACY SURFACES (NOT AUTOMATICALLY SYNCHRONIZED)
+  job_search_assistant/app.py  -> Streamlit + own applications DB
+  server.py                   -> MCP job store -> jobs.db
+  tools/local_memory.py       -> local memory MCP service
+  agents/*.py                 -> optional Agent SDK workflows
+  submission/submitter.py     -> profile/settings helpers + submission log</code></pre>
+<h3>Module Responsibilities</h3><table><thead><tr><th>Module</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>pipeline/workflow.py</code></td><td>Configuration, processed-job database, serial orchestration, package generation, reporting.</td></tr>
+<tr><td><code>pipeline/apify_scraper.py</code></td><td>Canonical JobListing; Apify run lifecycle; source adapters; fetch aggregation and deduplication.</td></tr>
+<tr><td><code>pipeline/profile_analyzer.py</code></td><td>Candidate dataclasses, text extraction, cached profile parsing and resume-hash invalidation.</td></tr>
+<tr><td><code>pipeline/job_matcher.py</code></td><td>Keyword normalization, experience/seniority inference, ranking, gaps and interview topics.</td></tr>
+<tr><td><code>pipeline/resume_generator.py</code></td><td>Claude prompt construction, JSON parsing, TailoredResume and cover-letter generation.</td></tr>
+<tr><td><code>pipeline/document_builder.py</code></td><td>ReportLab PDF and python-docx outputs; escaping and font support.</td></tr>
+<tr><td><code>pipeline/app_tracker.py</code></td><td>Relational application CRM, documents, contacts, interviews, notes and follow-ups.</td></tr>
+<tr><td><code>submission/</code></td><td>Form-answer helpers, account creation, encrypted portal store, browser engines and submission adapters.</td></tr>
+</tbody></table>
+<p>The Agent SDK modules are alternative workflows; the main pipeline calls its component classes directly rather than dispatching those agents.</p></section>
+<section id="flows"><h2>03 / Processing Flows</h2>
+<h3>A. Batch Preparation: Actual Call Order</h3>
+<ol class="flow"><li><b>Load profile</b><span>Read valid cache or extract resume/export and parse with Claude.</span></li><li><b>Fetch jobs</b><span>Configured sources, queries, locations and excluded titles.</span></li><li><b>Remove duplicates</b><span>In-fetch dedup plus processed_jobs lookup.</span></li><li><b>Score and split</b><span>Compute MatchResult; mark below-threshold jobs skipped.</span></li><li><b>Build packages</b><span>For each match, tailor resume; build PDF/DOCX, optional cover letter and analysis.</span></li><li><b>Publish and record</b><span>Attempt Drive and Sheets; mark matched; notify; write run log/report.</span></li></ol>
+<p><strong>Important:</strong> this flow prepares documents; it does not apply. Optional cloud failures do not prevent the job being marked matched. Failed jobs are retried next run; matched and skipped jobs are excluded.</p>
+<h3>B. Dashboard Preparation</h3><pre><code>POST /api/jobs/prepare
+  -> validate title/company
+  -> construct minimal job object
+  -> attempt Claude tailoring, otherwise master PDF fallback
+  -> call AppTracker.add_application()
+  -> return local paths, app_id, keywords, ai_tailored flag</code></pre>
+<p>Current discrepancies: the minimal job lacks <code>requirements</code>, which the resume generator reads; the catch-all fallback can hide that error. Tracker insertion marks a merely prepared job as applied, and the response can remain <code>ok: true</code> even without a resume file.</p>
+<h3>C. Optional Browser Submission</h3><pre><code>POST /api/jobs/apply
+  -> create in-memory task ID -> launch daemon thread
+  -> optional portal credential lookup
+  -> ResumeAdapter.prepare() or master-resume fallback
+  -> AutoApplier.apply(url)
+       dry_run=true: return without browser launch
+       otherwise: detect platform -> launch Chromium -> fill/submit adapter
+  -> store task result in process memory
+GET /api/jobs/apply/&lt;task_id&gt;/status -> poll task</code></pre>
+<p>API task status <code>done</code> means the worker returned, not necessarily that submission succeeded. Check <code>result.success</code>. Task state is lost on restart, and this handler does not persist a confirmed application outcome to AppTracker.</p>
+<h3>D. Failure Semantics</h3><table><thead><tr><th>Failure</th><th>Current Behavior</th><th>Recommended Behavior</th></tr></thead><tbody>
+<tr><td>Profile parsing / missing input</td><td>Workflow catches exceptions, returns empty candidate and continues.</td><td>Fail before scoring; preserve diagnostics and prior valid cache.</td></tr>
+<tr><td>Fetch / actor failure</td><td>Often logs and returns empty list.</td><td>Return typed source result with success/empty/error and retry metadata.</td></tr>
+<tr><td>Resume build failure</td><td>Mark failed; retry on later run.</td><td>Record stage-specific failure and bounded retry policy.</td></tr>
+<tr><td>Drive / Sheets failure</td><td>Warning; continue and mark matched.</td><td>Persist upload/sync pending state and retry separately.</td></tr>
+<tr><td>Notification after mark matched fails</td><td>Outer handler may mark failed after artifacts/tracker writes.</td><td>Isolate delivery from package success using an outbox.</td></tr>
+</tbody></table></section>
+<section id="models"><h2>04 / Data &amp; Storage</h2>
+<table><thead><tr><th>Contract</th><th>Primary Fields</th><th>Notes</th></tr></thead><tbody>
+<tr><td>JobListing</td><td>title, company, location, description, requirements[], apply_url, source, job_id</td><td>Default ID: first 16 hexadecimal characters of MD5(title|company|URL). Formatting or URL tracking changes can create new identities.</td></tr>
+<tr><td>CandidateProfile</td><td>identity/contact fields, skills, work_experience, education, certifications, keywords, domain information, raw_resume_text</td><td>WorkExperience, Education and Certification are dataclasses. Resume cache hash is metadata, not candidate evidence.</td></tr>
+<tr><td>MatchResult</td><td>job, score, matched_keywords, missing_keywords, reasons, gaps, interview_prep_topics, recommended</td><td>Topics and gaps depend on optional Claude analysis.</td></tr>
+<tr><td>TailoredResume</td><td>candidate fields, summary, skills_section, experience_bullets, education/certifications, ATS keywords, notes</td><td>Generated JSON is converted into a dataclass; no independent evidence validator.</td></tr>
+<tr><td>ApplicationRow</td><td>company, title, job_url, score, resume_link, status, source, missing skills, interview topics, date</td><td>Sheets/CSV projection, separate from relational CRM.</td></tr>
+</tbody></table>
+<h3>Storage Boundaries</h3><pre><code>data/pipeline.db
+  processed_jobs(job_id PK, title, company, source, score, status, processed_at)
+  run_log(id PK, run_date, counts, errors JSON, duration_sec)
+
+data/applications.db
+  companies 1 ---- N applications
+                      |---- N contacts
+                      |---- N interview_stages
+                      |---- N documents
+                      |---- N notes
+                      |---- N follow_ups
+  portals (credential store uses this DB by default)
+
+Other independent stores:
+  jobs.db                               MCP scraped job records
+  job_search_assistant/database/jobs.db  Streamlit application records
+  data/candidate_profile.json            parsed profile cache
+  submission/profile.json                nested submission profile
+  submission/submissions.json            submission audit helper log
+  logs/applications.csv                  batch tracking fallback</code></pre>
+<p>AppTracker uses WAL. Foreign-key enforcement is enabled in its schema initialization script but not in every newly opened connection; enable <code>PRAGMA foreign_keys=ON</code> in <code>_conn()</code> to guarantee relational constraints on all operations.</p>
+<h3>Artifact Layout</h3><pre><code>output/&lt;safe_company_title&gt;/              # batch path, truncated to 60 characters
+  Tailored_Resume.pdf
+  Tailored_Resume.docx
+  Cover_Letter.docx                       # optional
+  Match_Analysis.txt
+
+output/applications/&lt;safe_company_title&gt;/ # dashboard preparation path
+  resume.pdf / resume.docx / cover_letter.docx
+
+Google Drive / Job Applications /
+  &lt;Company - Title - YYYY-MM-DD&gt;/
+    Job Description.txt
+    Tailored Resume.pdf
+    Tailored Resume.docx
+    Cover Letter.docx                     # optional
+    Match Analysis.txt</code></pre>
+<p>The batch workflow passes job description text to Drive but does not write a local job-description file. Local company/title-only directories can overwrite distinct requisitions or repeated generations. Use job ID and document version in the target design.</p></section>
+<section id="matching"><h2>05 / Matching &amp; AI</h2>
+<table><thead><tr><th>Component</th><th>Maximum</th><th>Input</th></tr></thead><tbody><tr><td>Keyword overlap</td><td>40</td><td>Known JD keywords matched to normalized profile skills.</td></tr><tr><td>Title alignment</td><td>20</td><td>Job title compared with candidate titles.</td></tr><tr><td>Experience</td><td>20</td><td>Inferred required years / seniority versus profile experience.</td></tr><tr><td>Domain alignment</td><td>10</td><td>Candidate domain evidence versus job text.</td></tr><tr><td>Claude analysis</td><td>10</td><td>Optional bonus and qualitative gaps/topics.</td></tr></tbody></table>
+<pre><code>base = keyword + title + experience + domain
+if use_claude AND api_key_present AND base >= threshold - 15:
+    bonus, interview_topics, gaps = Claude analysis
+score = min(100, base + bonus)
+recommended = score >= threshold</code></pre>
+<p>The implementation can produce zero, despite the requested 1-100 scale. Without Claude, the ceiling is 90. Required qualifications are not hard rejection gates; absent mandatory credentials can still yield a high score. Calibration against real recruiting outcomes is not present.</p>
+<h3>Resume Rules and Trust Boundaries</h3>
+<p>Prompts instruct Claude not to invent skills, employers, dates, or metrics and to use one page below five years and two pages otherwise. System/profile prompt blocks use ephemeral cache hints. Cache hits and savings depend on provider behavior and payload eligibility; they are not a fixed percentage guarantee.</p>
+<p>Generated JSON is parsed and empty experience sections can fall back to original bullets. PDF/DOCX builders render the result but do not measure and enforce final page limits. Treat scraped descriptions as untrusted data, never as instructions. Human review is still necessary before using generated documents or screening answers.</p>
+<p>Claude is the implemented provider. An interchangeable OpenAI/Claude provider layer is a proposed enhancement, not current functionality. Model strings in source are configuration defaults, not verified current provider availability.</p></section>
+<section id="integrations"><h2>06 / Integrations</h2>
+<table><thead><tr><th>Integration</th><th>Code-Level Behavior</th><th>Setup / Limitation</th></tr></thead><tbody>
+<tr><td>Apify</td><td>Bearer authentication; start actor, poll, read default dataset.</td><td><code>APIFY_API_TOKEN</code>. Actor slugs use <code>owner~name</code>. LinkedIn/Indeed adapter input schemas need real integration validation.</td></tr>
+<tr><td>Greenhouse / Lever</td><td>Public board APIs with configured company slugs.</td><td>Not Apify-based in this implementation. Company lists must be maintained.</td></tr>
+<tr><td>Other job sources</td><td>Dice, RemoteOK, We Work Remotely, The Muse and USAJobs adapter classes exist.</td><td>Availability varies. Wellfound and ZipRecruiter implementations are placeholders; class presence is not source support certification.</td></tr>
+<tr><td>Google Drive</td><td>Service-account credentials; find/create folders; upload artifacts.</td><td><code>GOOGLE_DRIVE_CREDENTIALS_PATH</code>, optional <code>GOOGLE_DRIVE_ROOT_FOLDER_ID</code>. OAuth is mentioned in comments but not implemented in this builder. Validate folder permissions and storage suitability.</td></tr>
+<tr><td>Google Sheets</td><td>Uses existing spreadsheet and <code>Applications</code> tab; writes headers and rows; CSV fallback.</td><td><code>GOOGLE_SHEETS_SPREADSHEET_ID</code> plus Google credentials. Create/share the spreadsheet and tab separately.</td></tr>
+<tr><td>Email</td><td>SMTP run summaries.</td><td><code>NOTIFY_EMAIL_TO</code>, <code>NOTIFY_EMAIL_FROM</code>, <code>NOTIFY_EMAIL_PASSWORD</code>; inspect SMTP configuration before enabling.</td></tr>
+<tr><td>Slack / Discord</td><td>Webhook summaries and alerts.</td><td><code>NOTIFY_SLACK_WEBHOOK</code>, <code>NOTIFY_DISCORD_WEBHOOK</code>. Treat URLs as secrets.</td></tr>
+<tr><td>Browser portals</td><td>Platform appliers, optional login/account helpers and screening advisor.</td><td>Requires Playwright and browser binaries. Authentication, CAPTCHA, MFA and site changes can stop automation; use human handoff rather than bypass.</td></tr>
+</tbody></table>
+<p>Apify dataset retrieval currently makes one items request without explicit pagination. HTTP paths lack a general retry/backoff policy for 429 and transient server failures. Five-second polling is not equivalent to rate-limit handling, and its elapsed counter excludes HTTP request durations.</p></section>
+<section id="api"><h2>07 / API Reference</h2>
+<p>Flask serves the dashboard at <code>http://127.0.0.1:5050/</code> by default. These endpoints are local-development interfaces without an authentication layer.</p>
+<table><thead><tr><th>Method / Path</th><th>Purpose / Inputs</th></tr></thead><tbody>
+<tr><td>GET /</td><td>Serve static dashboard HTML.</td></tr><tr><td>GET /api/stats</td><td>Counts, response proxy and weekly activity from AppTracker.</td></tr><tr><td>GET /api/applications</td><td>List; optional <code>status</code> and <code>limit</code>.</td></tr><tr><td>PATCH /api/applications/&lt;id&gt;</td><td>Update <code>status</code> and optional <code>note</code>.</td></tr><tr><td>GET /api/follow-ups</td><td>Pending follow-ups; optional <code>days</code>.</td></tr><tr><td>GET /api/inbox</td><td>Application-derived inbox representation, not a connected email inbox.</td></tr>
+<tr><td>GET /api/jobs/matches</td><td>Cached scored job matches.</td></tr><tr><td>POST /api/jobs/refresh-matches</td><td>Refresh job matches.</td></tr><tr><td>GET /api/jobs/search</td><td>Live source search; query and result-limit inputs.</td></tr><tr><td>GET /api/jobs/board</td><td>Multi-source board aggregation.</td></tr>
+<tr><td>POST /api/jobs/prepare</td><td><code>{title, company, url, description, source, match_score}</code>; local artifact paths and tracker ID.</td></tr><tr><td>POST /api/jobs/apply</td><td><code>{url, title, company, portal_id?, headless?, dry_run?}</code>; returns task ID.</td></tr><tr><td>GET /api/jobs/apply/&lt;task_id&gt;/status</td><td>Worker status, steps, result and error.</td></tr>
+<tr><td>GET / PUT /api/profile</td><td>Read or update allowlisted nested submission-profile fields.</td></tr><tr><td>GET / PUT /api/config</td><td>Read or update search/matching configuration.</td></tr><tr><td>GET /api/keys/status</td><td>Presence flags, not secret values.</td></tr><tr><td>PUT /api/keys</td><td>Rewrite allowed environment-key entries in local .env.</td></tr>
+<tr><td>GET / POST /api/portals</td><td>List or create stored portal configuration.</td></tr><tr><td>PUT / DELETE /api/portals/&lt;id&gt;</td><td>Update or delete portal.</td></tr><tr><td>POST /api/portals/&lt;id&gt;/test</td><td>Attempt portal connection/login validation; external side effects possible.</td></tr>
+</tbody></table>
+<h3>Safe Submission-Path Probe</h3><pre><code>curl -X POST http://127.0.0.1:5050/api/jobs/apply \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/jobs/123","title":"Engineer","company":"Example","dry_run":true}'</code></pre>
+<p>Even this API dry run prepares the resume before AutoApplier checks the flag, so it may call Claude and fetch job text. It skips browser launch, not every upstream side effect. No live credentials or personal data are embedded in this document.</p></section>
+<section id="setup"><h2>08 / Developer Setup</h2>
+<h3>Environment</h3><pre><code>cd /Users/venkatn/job_application_agent
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+
+# Additional dependencies used by the Flask/browser paths but missing
+# from the reviewed root requirements.txt:
+python -m pip install Flask playwright
+python -m playwright install chromium</code></pre>
+<p>Use a modern Python 3 runtime and pin a tested version for deployment. The current shell has <code>python3</code> but no global <code>python</code>; activating a virtual environment normally provides the latter. Requirements use lower bounds rather than a reproducible lockfile.</p>
+<h3>Inputs and Configuration</h3>
+<ol><li>Place the factual master resume at <code>data/master_resume/resume.pdf</code>, or change <code>paths.master_resume</code>.</li><li>Set credentials locally in <code>.env</code>. Preserve any existing file; do not overwrite it with a template or expose keys in commands, logs or documentation.</li><li>Edit <code>config/settings.yaml</code>: queries, locations, source list, board slugs, threshold and paths. Base paths resolve relative to the YAML directory through <code>paths.base_dir</code>.</li><li>For browser submission, validate the additional <code>submission/profile.json</code> and settings. These are not the same schema as the cached CandidateProfile.</li><li>For cloud storage, enable the required Google APIs, provide service-account JSON, grant access to the target folder/spreadsheet, and prepare an <code>Applications</code> tab.</li></ol>
+<pre><code># Environment variable NAMES only; do not publish values:
+ANTHROPIC_API_KEY
+APIFY_API_TOKEN
+GOOGLE_DRIVE_CREDENTIALS_PATH
+GOOGLE_DRIVE_ROOT_FOLDER_ID
+GOOGLE_SHEETS_SPREADSHEET_ID
+AUTO_APPLY_DRY_RUN=true
+NOTIFY_EMAIL_TO / NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_PASSWORD
+NOTIFY_SLACK_WEBHOOK / NOTIFY_DISCORD_WEBHOOK</code></pre>
+<h3>Entry Points</h3><table><thead><tr><th>Command</th><th>Behavior</th></tr></thead><tbody><tr><td><code>python main.py profile --refresh</code></td><td>Reparse candidate input; Claude usage possible.</td></tr><tr><td><code>python main.py score URL --company Example</code></td><td>Fetch and score one job; inspect missing skills.</td></tr><tr><td><code>python main.py run</code></td><td>Run preparation pipeline; does not submit.</td></tr><tr><td><code>python main.py stats</code></td><td>View pipeline statistics.</td></tr><tr><td><code>python api_server.py</code></td><td>Start dashboard, default loopback port 5050.</td></tr><tr><td><code>python main.py schedule</code></td><td>Start blocking daily/weekly scheduler.</td></tr><tr><td><code>python apply_job.py --url URL --dry-run</code></td><td>Exercise single-job CLI dry-run path; upstream preparation may still run.</td></tr><tr><td><code>python -m submission.submitter check</code></td><td>Validate submission helper profile/settings.</td></tr><tr><td><code>streamlit run job_search_assistant/app.py</code></td><td>Launch separate Streamlit interface.</td></tr><tr><td><code>python server.py</code></td><td>Start MCP job-store server.</td></tr></tbody></table>
+<p><code>config.py</code> belongs to the older UI workflow; <code>config/settings.yaml</code> governs the main pipeline. Do not assume changing one updates the other.</p></section>
+<section id="operations"><h2>09 / Operations</h2>
+<p>Current YAML schedules a daily run at <strong>08:00 America/Los_Angeles</strong>, not the user's America/Chicago timezone. Weekly analytics runs Sunday at 09:00 in the configured scheduler timezone. Set the timezone explicitly if Central time is intended. The scheduler must remain running and has no durable job store configured.</p>
+<table><thead><tr><th>Concern</th><th>Current State / Operator Action</th></tr></thead><tbody>
+<tr><td>Concurrency</td><td>Main matched-job processing is serial. <code>scheduler.max_concurrent</code> is not wired to worker concurrency. Dashboard apply creates unbounded daemon threads.</td></tr>
+<tr><td>Reprocessing</td><td>Matched/skipped jobs are suppressed indefinitely by ID; profile or threshold changes do not re-evaluate them. Design explicit rescore/version policies rather than deleting production history.</td></tr>
+<tr><td>Reports</td><td>Batch writes <code>logs/run_YYYY-MM-DD.txt</code>; same-day runs overwrite that report. Database preserves separate run rows.</td></tr>
+<tr><td>Backups</td><td>Back up SQLite with a transaction-aware backup operation, generated artifacts, settings and profile sources. Protect personal data; keep encryption-key backups separate and access-controlled.</td></tr>
+<tr><td>Recovery</td><td>Retain failed-job diagnostics. Verify artifacts before retrying, since partial cloud uploads and tracker writes may already exist.</td></tr>
+<tr><td>Observability</td><td>Python logging, run counts and text reports exist. Add run/job IDs, per-stage timings, source-error counts, sync status and audit events.</td></tr>
+</tbody></table>
+<h3>Troubleshooting</h3><ul><li><strong>No matches:</strong> inspect profile content, source errors, title exclusions and scoring components before lowering threshold.</li><li><strong>Master resume returned instead of tailored:</strong> inspect dashboard warnings; a key's presence does not prove tailoring succeeded.</li><li><strong>Drive/Sheets not updated:</strong> check identity permissions, spreadsheet/tab IDs and logs; matched status does not guarantee cloud success.</li><li><strong>Task disappeared:</strong> dashboard apply task state is in memory and disappears on process restart.</li><li><strong>Repeated or missing applications:</strong> compare pipeline.db, applications.db, CSV and submission logs; they are not a unified audit trail.</li></ul></section>
+<section id="security"><h2>10 / Security</h2>
+<p>Candidate resumes, contact information, work authorization answers, browser credentials and generated documents are sensitive. Resume and job text are sent to Claude when enabled; cloud artifacts go to Google and notifications may disclose job/profile details to additional services.</p>
+<ul><li>Keep Flask bound to loopback. The server enables broad CORS and debug mode, and sensitive mutation routes lack authentication. Do not expose it publicly without authentication, authorization, CSRF/origin protection and hardened serving.</li><li>Rotate any credentials previously exposed in chat or terminal history. Keep secrets out of version control, generated HTML, screenshots and application logs.</li><li>Portal passwords use Fernet encryption with a local <code>data/.portal_key</code> created mode 0600. Encryption is not protection against compromise of both DB and key on the same host.</li><li>Validate and constrain submitted URLs before requests or browser navigation. Block local/private network targets and unsupported schemes to reduce SSRF exposure.</li><li>Set explicit dry-run controls during development. Browser automation must require deliberate submission approval; playbook instructions do not enforce controls in a separate Python path.</li><li>Do not infer consent, work eligibility, demographics, salary or legal declarations from missing data. Escalate unknown screening answers to the candidate.</li><li>Use least-privilege Google scopes and retention/access policies for profile caches and output folders. Current Drive scopes include full Drive access.</li></ul></section>
+<section id="review"><h2>11 / Code Review Findings</h2>
+<p>Findings below preserve the original review snapshot. See the Revision 1.1 implementation update in Scope &amp; Status for fixes now implemented. Remaining work includes durable task state, cloud retries, pagination/backoff, artifact identity, evidence validation, settings enforcement and comprehensive SSRF protection. P1 denotes a high-priority correctness or safety issue; P2 denotes a material reliability or maintainability gap.</p>
+<article class="finding"><h3><span class="tag">P1</span> &middot; Preparation recorded as application</h3><p><code>prepare_job()</code> calls <code>add_application()</code>, which hardcodes <code>status='applied'</code> and an application timestamp before any submission. This corrupts application counts, response metrics and follow-up timing.</p><p><strong>Fix:</strong> introduce prepared/pending states and set applied only after confirmation evidence. Store preparation and submission timestamps separately.</p><p class="refs">Evidence: <a href="../api_server.py#L581">api_server.py:581</a>; <a href="../pipeline/app_tracker.py#L234">app_tracker.py:234</a>. Tracker default confirmed with an isolated temporary database.</p></article>
+<article class="finding"><h3><span class="tag">P1</span> &middot; Live submission default; inconsistent approval controls</h3><p>AutoApplier defaults <code>AUTO_APPLY_DRY_RUN</code> to false when no explicit flag is supplied. The Flask apply route passes missing dry_run as None. Submission-helper settings and playbook approval guidance are not a central enforcement gate here.</p><p><strong>Fix:</strong> default to dry-run; require explicit approved submission intent per job; record consent and enforce run caps in the submission service.</p><p class="refs">Evidence: <a href="../submission/auto_apply.py#L705">auto_apply.py:705</a>; <a href="../api_server.py#L1201">api_server.py:1201</a>.</p></article>
+<article class="finding"><h3><span class="tag">P1</span> &middot; Sensitive API operations are unprotected</h3><p>Key writes, profile changes, portal management and browser submission have no authentication middleware; CORS is broad and debug mode is enabled. Loopback binding limits exposure but does not make this a deployable multi-user API.</p><p><strong>Fix:</strong> authenticated local session, strict origins, CSRF protection, URL allowlists, validated request schemas and production server configuration.</p><p class="refs">Evidence: <a href="../api_server.py#L46">api_server.py:46</a>, <a href="../api_server.py#L743">api_server.py:743</a>, entry point at end of file.</p></article>
+<article class="finding"><h3><span class="tag">P1</span> &middot; Dashboard job contract breaks tailoring</h3><p>The dashboard constructs an ad hoc job object without <code>requirements</code>. <code>ResumeGenerator._jd_to_prompt()</code> accesses that field. The error is caught and may silently degrade to the master resume while the endpoint still reports success.</p><p><strong>Fix:</strong> instantiate JobListing with validated defaults; return explicit tailored/fallback/failed outcome and require an existing output file.</p><p class="refs">Evidence: <a href="../api_server.py#L523">api_server.py:523</a>; <a href="../pipeline/resume_generator.py#L335">resume_generator.py:335</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Application URLs dropped at the tracker boundary</h3><p>JobListing exposes <code>apply_url</code>, but AppTracker reads <code>job.url</code>. Passing a canonical listing stores an empty job URL. The dashboard's ad hoc object masks the mismatch by setting both fields.</p><p><strong>Fix:</strong> use one canonical URL contract and add a cross-module contract test.</p><p class="refs">Evidence: <a href="../pipeline/apify_scraper.py#L40">apify_scraper.py:40</a>; <a href="../pipeline/app_tracker.py#L227">app_tracker.py:227</a>. Reproduced with a temporary database and apply_url-only object.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Empty candidate profile does not stop the pipeline</h3><p>Parsing errors return an empty profile, and processing continues. Poor scores can then be stored as skipped and suppressed in future runs even after the candidate profile is corrected.</p><p><strong>Fix:</strong> enforce minimum profile validity before fetching/scoring, and version dedup decisions by profile and scoring policy.</p><p class="refs">Evidence: <a href="../pipeline/workflow.py#L251">workflow.py:251</a> and <a href="../pipeline/workflow.py#L320">workflow.py:320</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Retry, pagination and sync completion gaps</h3><p>Apify reads a dataset with one unpaginated request and lacks general HTTP backoff. Drive/Sheets errors can be swallowed while jobs become matched, so the next run will not retry those uploads.</p><p><strong>Fix:</strong> pagination with explicit completion; bounded retries honoring Retry-After; persistent artifact and sync stages independent of matching.</p><p class="refs">Evidence: <a href="../pipeline/apify_scraper.py#L81">apify_scraper.py:81</a>, <a href="../pipeline/apify_scraper.py#L118">apify_scraper.py:118</a>, <a href="../pipeline/workflow.py#L395">workflow.py:395</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; State, filenames and idempotency are fragmented</h3><p>PipelineDB, CRM, Streamlit and MCP stores are separate. CRM has no unique job-identity constraint; company/title output names collide. Process-local task threads are neither durable nor bounded.</p><p><strong>Fix:</strong> unify job/application IDs, use versioned job-ID artifact paths, add unique idempotency keys and a persistent bounded task queue.</p><p class="refs">Evidence: <a href="../pipeline/app_tracker.py#L48">app_tracker.py:48</a>; <a href="../pipeline/workflow.py#L369">workflow.py:369</a>; <a href="../api_server.py#L1170">api_server.py:1170</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Settings and dependency declarations overstate behavior</h3><p>PipelineConfig reads required_keywords, min_salary and job_types, but the fetch workflow does not apply them. scheduler.max_concurrent is unused. Root requirements omit Flask, flask-cors and Playwright even though new entry points import them.</p><p><strong>Fix:</strong> wire or reject unsupported settings; declare entry-point dependency groups and lock tested versions.</p><p class="refs">Evidence: <a href="../pipeline/workflow.py#L86">workflow.py:86</a>, <a href="../pipeline/workflow.py#L334">workflow.py:334</a>, <a href="../scheduler.py#L125">scheduler.py:125</a>, <a href="../requirements.txt">requirements.txt</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Evidence and document rules are not machine-enforced</h3><p>No deterministic validation proves generated claims or metric provenance. Resume page targets are prompt-only. Profile cache invalidation checks resume changes, not LinkedIn-export changes. ScreeningMemory and advisor outputs need candidate-approved boundaries.</p><p><strong>Fix:</strong> evidence IDs for candidate claims, schema validation, prohibited-claim checks, rendered page-count tests, and hashes for all profile sources.</p><p class="refs">Evidence: <a href="../pipeline/resume_generator.py#L159">resume_generator.py:159</a>; <a href="../pipeline/profile_analyzer.py#L255">profile_analyzer.py:255</a>; <a href="../submission/apply_engine.py#L200">apply_engine.py:200</a>.</p></article>
+<article class="finding"><h3><span class="tag">P2</span> &middot; Partial API-key updates remove unrelated persisted keys</h3><p><code>save_keys()</code> removes all allowed keys from the existing .env and re-adds only nonempty keys in the request. Updating one key can erase other persisted keys while leaving their old values in process memory, producing different behavior after restart.</p><p><strong>Fix:</strong> merge explicitly supplied keys, define explicit deletion semantics, validate values and write atomically with restrictive permissions.</p><p class="refs">Evidence: <a href="../api_server.py#L744">api_server.py:744</a>.</p></article>
+</section>
+<section id="testing"><h2>12 / Verification &amp; Test Strategy</h2>
+<table><thead><tr><th>Check Performed for This Review</th><th>Result</th></tr></thead><tbody><tr><td><code>python3 -m compileall -q pipeline agents submission tools main.py scheduler.py api_server.py server.py</code></td><td>Passed; syntax compilation only, not import/dependency or runtime validation.</td></tr><tr><td>Temporary AppTracker database insertion using apply_url-only job</td><td>Confirmed <code>status='applied'</code>, nonempty applied timestamp, and empty <code>job_url</code>. No real application records changed.</td></tr><tr><td>Live scraping, Claude, Google APIs, notifications, browser submission</td><td>Not run for this review; no paid API calls or applications submitted.</td></tr></tbody></table>
+<p><code>test_pipeline.py</code> is a procedural smoke runner with network/API-dependent checks and skips. Some scraper checks accept any list, including an error-produced empty list, and the legacy RemoteOK check returns an exception description instead of raising. A green test therefore does not prove a functioning external integration.</p>
+<h3>Recommended Coverage</h3><table><thead><tr><th>Layer</th><th>Required Cases</th></tr></thead><tbody><tr><td>Unit</td><td>Skill aliases and false positives; thresholds and score bounds; missing experience; profile validity; cache invalidation; filename collisions; screening answers for unknown facts.</td></tr><tr><td>Contract</td><td>JobListing accepted by matcher, generator, tracker and API; validated Claude JSON; provider error versus empty source result.</td></tr><tr><td>Persistence</td><td>Canonical job ID uniqueness; prepared versus applied; transaction rollback; foreign keys; failed-job retry; profile-version rescoring.</td></tr><tr><td>HTTP integrations</td><td>Mock 200/empty, 401, 403, 404, 429/Retry-After, 5xx, timeouts, malformed responses and paginated datasets.</td></tr><tr><td>Documents</td><td>PDF text extraction, DOCX readability, Unicode, overflow, actual page count, no unsupported metrics/skills, complete chronology.</td></tr><tr><td>API / security</td><td>Authentication, origin policy, schema validation, partial secret updates, private URL rejection, dry-run default and explicit consent.</td></tr><tr><td>Browser</td><td>Local fixture forms; upload and required fields; login/MFA handoff; no submit under dry-run; confirmation evidence after explicit approval.</td></tr><tr><td>End-to-end</td><td>Fixture job + profile -> score -> package -> local tracker, then separately credential-gated sandbox integrations.</td></tr></tbody></table>
+<p>Do not run submission-oriented scripts as generic CI tests. Split offline tests from paid and side-effecting integrations with explicit opt-in markers.</p></section>
+<section id="extension"><h2>13 / Extension Guide</h2>
+<h3>Add a Job Source</h3><ol><li>Implement an adapter returning <code>list[JobListing]</code> with complete description, stable source ID and canonical application URL.</li><li>Register it in JobFetcher and define query/location/result-limit behavior. Return typed errors rather than hiding failures as zero jobs.</li><li>Add response fixtures, pagination, rate-limit and malformed-response tests; document credentials and permitted use.</li><li>Expose the source consistently in YAML, API and UI; avoid a second independent scraper implementation.</li></ol>
+<h3>Add a Submission Platform</h3><ol><li>Extend platform detection and the adapter registry in <code>submission/auto_apply.py</code>.</li><li>Implement the existing page/profile/resume/cover-letter/credentials interface, but centralize approval checks outside adapters.</li><li>Use approved candidate answers; unknown mandatory fields must stop the flow.</li><li>Require positive confirmation evidence, redact diagnostics and test against local forms before any approved real submission.</li></ol>
+<h3>Change Matching or Add an LLM Provider</h3><p>Keep scoring deterministic by default; version score policy and record component scores. Introduce a narrow provider interface for structured profile parsing, resume drafting and optional semantic analysis. Validate a common output schema and evidence constraints regardless of provider. Keep model choice/configuration outside business logic.</p>
+<h3>Developer Conventions</h3><p>Prefer existing dataclasses over ad hoc objects; share domain contracts across CLI and API; use UTC for persisted events and explicit display timezones; record IDs in every log; keep secrets and candidate content out of fixtures; separate network work from database transactions. Preserve unrelated worktree changes during implementation.</p></section>
+<section id="roadmap"><h2>14 / Proposed Target Design</h2>
+<div class="note"><strong>Proposed, not implemented:</strong> the design below closes the gaps without replacing the source adapters or document builders unnecessarily.</div>
+<pre><code>Unified Application Service (shared by CLI, scheduler, dashboard)
+  -> validated Job + CandidateEvidence contracts
+  -> persistent job/run/application/document/attempt records
+  -> bounded worker queue with stage retries
+  -> LLM provider adapter + evidence validation
+  -> artifact store + cloud-sync outbox
+  -> approval gate -> submission adapter -> confirmation evidence
+  -> status projection -> dashboard / Sheets / notifications
+
+State model:
+  discovered -> scored -> skipped
+                    \-> matched -> prepared -> awaiting_approval
+                                                -> approved -> submitting
+                                                                  -> submitted
+                                                                  -> needs_attention
+                                                                  -> failed
+
+Independent stage states:
+  document_generation / drive_sync / sheets_sync / notification_delivery
+  pending -> running -> succeeded | retryable_failed | terminal_failed</code></pre>
+<table><thead><tr><th>Priority</th><th>Deliverable</th><th>Acceptance Gate</th></tr></thead><tbody><tr><td>1 / Correctness &amp; consent</td><td>Canonical job contract; prepared/applied distinction; fail-fast profile validation; default dry-run and explicit approval.</td><td>No prepared record counted as applied; no submission without recorded approval; empty profile cannot poison dedup history.</td></tr><tr><td>2 / Reliability</td><td>Unified IDs, durable tasks, pagination/backoff, idempotency, sync outbox and reproducible dependency set.</td><td>Restart resumes work safely; retries do not duplicate submissions or artifacts; cloud outages recover independently.</td></tr><tr><td>3 / Evidence &amp; operations</td><td>Claim provenance, rendered-page validation, source health, structured logs and end-to-end fixture suite.</td><td>Unsupported claims blocked; page rules measured; failed sources distinguishable from empty results.</td></tr><tr><td>4 / Optional product work</td><td>Drive portfolio ingestion, spreadsheet provisioning, provider interchangeability and resume-outcome analytics.</td><td>Explicit consent, documented contracts, lineage and measured outcome attribution.</td></tr></tbody></table></section>
+<section id="sources"><h2>15 / Source Index</h2>
+<p>Links are relative to this document's <code>docs/</code> directory. Source line fragments provide review locations; not all browser source viewers support line anchors.</p>
+<table><thead><tr><th>Area</th><th>Source</th></tr></thead><tbody><tr><td>Entry points</td><td><a href="../main.py">main.py</a>, <a href="../scheduler.py">scheduler.py</a>, <a href="../api_server.py">api_server.py</a>, <a href="../apply_job.py">apply_job.py</a>, <a href="../apply_today.py">apply_today.py</a></td></tr><tr><td>Core workflow</td><td><a href="../pipeline/workflow.py">workflow.py</a>, <a href="../pipeline/apify_scraper.py">apify_scraper.py</a>, <a href="../pipeline/profile_analyzer.py">profile_analyzer.py</a>, <a href="../pipeline/job_matcher.py">job_matcher.py</a></td></tr><tr><td>Documents</td><td><a href="../pipeline/resume_generator.py">resume_generator.py</a>, <a href="../pipeline/document_builder.py">document_builder.py</a></td></tr><tr><td>Storage / delivery</td><td><a href="../pipeline/app_tracker.py">app_tracker.py</a>, <a href="../pipeline/drive_manager.py">drive_manager.py</a>, <a href="../pipeline/sheets_tracker.py">sheets_tracker.py</a>, <a href="../pipeline/notifier.py">notifier.py</a></td></tr><tr><td>Submission</td><td><a href="../submission/auto_apply.py">auto_apply.py</a>, <a href="../submission/apply_engine.py">apply_engine.py</a>, <a href="../submission/portal_store.py">portal_store.py</a>, <a href="../submission/submitter.py">submitter.py</a>, <a href="../submission/README.md">submission README</a></td></tr><tr><td>Alternate interfaces</td><td><a href="../server.py">MCP server</a>, <a href="../job_search_assistant/app.py">Streamlit app</a>, <a href="../static/dashboard.html">dashboard</a>, <a href="../tools/local_memory.py">local memory</a></td></tr><tr><td>Configuration / tests</td><td><a href="../config/settings.yaml">settings.yaml</a>, <a href="../requirements.txt">requirements.txt</a>, <a href="../test_pipeline.py">test_pipeline.py</a>, <a href="../test_indeed_apply.py">test_indeed_apply.py</a></td></tr></tbody></table>
+<footer>Documentation-only deliverable. Implementation behavior was reviewed from this workspace snapshot; external provider availability, credentials and live submission outcomes were not validated. Maintain this guide alongside changes to domain contracts, endpoints and processing states.</footer>
+</section>
+</main></div>
+</body></html>

@@ -410,13 +410,23 @@ class RemoteOKScraper:
 
         jobs = []
         query_lower = query.lower()
+        # Normalize for tag matching: "data engineer" → also check "data-engineer"
+        query_hyphen = query_lower.replace(" ", "-")
+        query_words = set(query_lower.split())
         for item in data:
             if not isinstance(item, dict) or "id" not in item:
                 continue
             title = item.get("position") or ""
-            tags = " ".join(item.get("tags") or [])
-            if query_lower and query_lower not in title.lower() and query_lower not in tags.lower():
-                continue
+            tags_list = item.get("tags") or []
+            tags_str = " ".join(tags_list).lower()
+            tags_hyphen = tags_str.replace(" ", "-")
+            if query_lower:
+                title_match = query_lower in title.lower()
+                tag_match = (query_lower in tags_str or
+                             query_hyphen in tags_str or
+                             any(w in tags_list for w in query_words))
+                if not title_match and not tag_match:
+                    continue
             jobs.append(JobListing(
                 job_id=f"remoteok_{item['id']}",
                 title=title,
@@ -442,6 +452,175 @@ class WellfoundScraper:
     def search(self, query: str, max_results: int = 20) -> list[JobListing]:
         # Wellfound has no public unauthenticated job search API.
         # Jobs scraped via Apify actor 'maxcopell/wellfound' if APIFY_API_TOKEN is set.
+        return []
+
+
+class WeWorkRemotelyScraper:
+    """
+    We Work Remotely — parses the public RSS feed (no API key needed).
+    Category feeds cover: programming, devops, design, marketing, customer support, etc.
+    """
+
+    _FEEDS = {
+        "programming": "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+        "devops":      "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+        "data":        "https://weworkremotely.com/categories/remote-data-science-jobs.rss",
+        "all":         "https://weworkremotely.com/remote-jobs.rss",
+        "back-end":    "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
+    }
+
+    def search(self, query: str = "", max_results: int = 20,
+               categories: list[str] | None = None) -> list[JobListing]:
+        import xml.etree.ElementTree as ET
+
+        feed_urls = []
+        for cat in (categories or ["programming", "devops", "data"]):
+            url = self._FEEDS.get(cat)
+            if url:
+                feed_urls.append(url)
+
+        query_lower = query.lower()
+        jobs: list[JobListing] = []
+        seen_titles: set[str] = set()
+
+        for feed_url in feed_urls:
+            if len(jobs) >= max_results:
+                break
+            try:
+                resp = requests.get(feed_url, timeout=15,
+                                    headers={"User-Agent": "Mozilla/5.0"},
+                                    allow_redirects=True)
+                resp.raise_for_status()
+                root = ET.fromstring(resp.content)
+            except Exception as e:
+                logger.warning("[weworkremotely] Feed %s failed: %s", feed_url, e)
+                continue
+
+            ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+            for item in root.iter("item"):
+                if len(jobs) >= max_results:
+                    break
+                title_el = item.find("title")
+                link_el  = item.find("link")
+                desc_el  = item.find("description")
+                pub_el   = item.find("pubDate")
+                if title_el is None:
+                    continue
+
+                raw_title = (title_el.text or "").strip()
+                # WWR format: "Company: Job Title" or just "Job Title"
+                if ": " in raw_title:
+                    company_part, _, job_title = raw_title.partition(": ")
+                else:
+                    company_part = ""
+                    job_title = raw_title
+
+                if query_lower and query_lower not in job_title.lower() and \
+                        query_lower not in raw_title.lower():
+                    continue
+
+                dedup_key = f"{company_part}|{job_title}"
+                if dedup_key in seen_titles:
+                    continue
+                seen_titles.add(dedup_key)
+
+                link = (link_el.text or "").strip() if link_el is not None else ""
+                desc = (desc_el.text or "").strip() if desc_el is not None else ""
+                posted = (pub_el.text or "")[:16] if pub_el is not None else None
+
+                jobs.append(JobListing(
+                    title=job_title,
+                    company=company_part or "Unknown",
+                    location="Remote",
+                    description=desc,
+                    apply_url=link,
+                    posted_date=posted,
+                    source="weworkremotely",
+                    job_type="full-time",
+                    requirements=[],
+                ))
+
+        logger.info("[weworkremotely] %d jobs for %r", len(jobs), query)
+        return jobs[:max_results]
+
+
+class TheMuseScraper:
+    """
+    The Muse public jobs API — no API key required for basic use.
+    Good coverage of tech, marketing, and design roles at mid-sized companies.
+    """
+
+    _BASE = "https://www.themuse.com/api/public/jobs"
+
+    def search(self, query: str, max_results: int = 20,
+               category: str = "") -> list[JobListing]:
+        import urllib.parse
+
+        params = {
+            "page": "0",
+            "descending": "true",
+            "query": query,
+        }
+        if category:
+            params["category"] = category
+        url = self._BASE + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception as e:
+            logger.warning("[themuse] Search failed for %r: %s", query, e)
+            return []
+
+        jobs = []
+        q_words = [w for w in query.lower().split() if len(w) > 2]
+        for item in data.get("results", []):
+            title = item.get("name") or ""
+            company = (item.get("company") or {}).get("name") or ""
+            if not title:
+                continue
+            # Client-side keyword filter: at least one query word must appear in title
+            if q_words and not any(w in title.lower() for w in q_words):
+                continue
+
+            locs = item.get("locations") or [{}]
+            location = locs[0].get("name") if locs else "Remote"
+
+            refs = item.get("refs") or {}
+            apply_url = refs.get("landing_page") or ""
+
+            levels = item.get("levels") or [{}]
+            level = levels[0].get("name") if levels else None
+
+            jobs.append(JobListing(
+                job_id=f"muse_{item.get('id', '')}",
+                title=title,
+                company=company,
+                location=location,
+                description=item.get("contents") or "",
+                apply_url=apply_url,
+                posted_date=item.get("publication_date", "")[:10] or None,
+                job_type=level,
+                source="themuse",
+                requirements=[],
+            ))
+
+        logger.info("[themuse] %d jobs for %r", len(jobs), query)
+        return jobs[:max_results]
+
+
+class ZipRecruiterScraper:
+    """
+    ZipRecruiter — protected by Cloudflare; no public unauthenticated API.
+    Returns empty. Use Playwright apply flow for ZipRecruiter URLs found elsewhere,
+    or use the Apify actor 'vaclavrut/ziprecruiter-jobs-scraper' if APIFY_API_TOKEN is set.
+    """
+
+    def search(self, query: str, location: str = "Remote", max_results: int = 20,
+               days_ago: int = 1) -> list[JobListing]:
         return []
 
 
@@ -520,6 +699,9 @@ class JobFetcher:
         self.remoteok = RemoteOKScraper()
         self.wellfound = WellfoundScraper()
         self.usajobs = USAJobsScraper()
+        self.weworkremotely = WeWorkRemotelyScraper()
+        self.themuse = TheMuseScraper()
+        self.ziprecruiter = ZipRecruiterScraper()
         self._seen: set[str] = set()
 
     def fetch_all(
@@ -538,7 +720,8 @@ class JobFetcher:
         exclude_titles: words that, if found in a job title, cause it to be dropped
         """
         all_sources = sources or ["linkedin", "indeed", "greenhouse", "lever",
-                                  "dice", "remoteok", "wellfound", "usajobs"]
+                                  "dice", "remoteok", "wellfound", "usajobs",
+                                  "weworkremotely", "themuse", "ziprecruiter"]
         locations = locations or ["Remote"]
         greenhouse_companies = greenhouse_companies or []
         lever_companies = lever_companies or []
@@ -616,6 +799,33 @@ class JobFetcher:
                     logger.info("USAJobs: +%d jobs for %r", len(jobs), query)
                 except Exception as e:
                     logger.error("USAJobs scrape failed: %s", e)
+
+        if "weworkremotely" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.weworkremotely.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("WeWorkRemotely: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("WeWorkRemotely scrape failed: %s", e)
+
+        if "themuse" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.themuse.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("TheMuse: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("TheMuse scrape failed: %s", e)
+
+        if "ziprecruiter" in all_sources:
+            for query in queries:
+                try:
+                    jobs = self.ziprecruiter.search(query, max_results=max_per_source)
+                    results.extend(self._dedup(jobs))
+                    logger.info("ZipRecruiter: +%d jobs for %r", len(jobs), query)
+                except Exception as e:
+                    logger.error("ZipRecruiter scrape failed: %s", e)
 
         # Apply title exclusion filter
         if _exclude:

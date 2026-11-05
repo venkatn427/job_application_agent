@@ -683,7 +683,8 @@ class AutoApplier:
     resume_pdf_path    Path to the tailored resume PDF to upload
     cover_letter_path  Optional cover letter DOCX/PDF to upload
     headless           Run browser headlessly (default True in production)
-    dry_run            If True, fill forms but do NOT click Submit
+    dry_run            If True (default), skip browser launch entirely
+    submission_approved Explicit approval required in addition to dry_run=False
     """
 
     def __init__(
@@ -694,6 +695,9 @@ class AutoApplier:
         cover_letter_path: Optional[str] = None,
         headless: bool = True,
         dry_run: Optional[bool] = None,
+        extra_creds: Optional[dict] = None,
+        on_step=None,
+        submission_approved: bool = False,
     ):
         self.profile_path = Path(profile_path)
         self.credentials_path = credentials_path
@@ -703,8 +707,11 @@ class AutoApplier:
         self.dry_run = (
             dry_run
             if dry_run is not None
-            else os.environ.get("AUTO_APPLY_DRY_RUN", "false").lower() == "true"
+            else os.environ.get("AUTO_APPLY_DRY_RUN", "true").lower() != "false"
         )
+        self.submission_approved = submission_approved is True
+        self._extra_creds: dict = extra_creds or {}
+        self._on_step = on_step or (lambda msg: None)
         self._profile: Optional[dict] = None
         self._creds: Optional[dict] = None
 
@@ -724,7 +731,8 @@ class AutoApplier:
     @property
     def creds(self) -> dict:
         if self._creds is None:
-            self._creds = _load_credentials(self.credentials_path)
+            base = _load_credentials(self.credentials_path)
+            self._creds = {**base, **self._extra_creds}
         return self._creds
 
     # ── Main entry point ──────────────────────────────────────────────────────
@@ -742,11 +750,17 @@ class AutoApplier:
         resume = resume_pdf_path or self.resume_pdf_path
         cover = cover_letter_path or self.cover_letter_path
         platform = detect_platform(job_url)
+        self._on_step(f"Platform detected: {platform}")
 
         if self.dry_run:
             logger.info("[DRY RUN] Would apply to %s via %s", job_url, platform)
+            self._on_step("DRY RUN — skipping browser launch")
             return {"success": False, "platform": platform, "url": job_url,
                     "error": "dry_run"}
+
+        if not self.submission_approved:
+            return {"success": False, "platform": platform, "url": job_url,
+                    "error": "submission_approval_required"}
 
         try:
             from playwright.sync_api import sync_playwright
@@ -755,6 +769,7 @@ class AutoApplier:
                 "playwright not installed. Run: pip install playwright && playwright install chromium"
             )
 
+        self._on_step("Launching browser…")
         logger.info("Starting Playwright apply: %s (platform=%s)", job_url, platform)
 
         with sync_playwright() as pw:
@@ -780,9 +795,11 @@ class AutoApplier:
 
             page = context.new_page()
             try:
+                self._on_step(f"Navigating to {job_url[:70]}…")
                 page.goto(job_url, wait_until="domcontentloaded", timeout=30_000)
                 _human_delay(1500, 3000)
 
+                self._on_step(f"Running {platform} applier…")
                 applier = _PLATFORM_APPLIERS.get(platform, _PLATFORM_APPLIERS["generic"])
                 success = applier.apply(
                     page=page,
@@ -792,6 +809,7 @@ class AutoApplier:
                     creds=self.creds,
                 )
 
+                self._on_step("Done ✓" if success else "Applier returned failure")
                 result = {
                     "success": success,
                     "platform": platform,

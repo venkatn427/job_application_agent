@@ -1,6 +1,7 @@
 # ── Secrets & credentials ─────────────────────────────────────────────────────
 .env
 submission/.secrets.env
+data/.portal_key
 **/service_account.json
 **/*.json.key
 *.pem
@@ -41,6 +42,7 @@ Thumbs.db
 # ── Claude Code local settings ────────────────────────────────────────────────
 .claude/
 .mcp.json
+.playwright-mcp/
 
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .vscode/
