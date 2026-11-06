@@ -20,7 +20,7 @@ import logging
 from typing import Optional
 from dataclasses import dataclass, field
 
-import anthropic
+from pipeline.llm import ModelClient, resolve
 
 from .apify_scraper import JobListing
 from .profile_analyzer import CandidateProfile
@@ -210,16 +210,18 @@ class JobMatcher:
         threshold: int = 70,
         use_claude: bool = True,
         api_key: Optional[str] = None,
+        ai_config=None,
     ):
         self.threshold = threshold
         self.use_claude = use_claude
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self._client: Optional[anthropic.Anthropic] = None
+        self.ai_config = ai_config
+        self.api_key = resolve("matching", config=ai_config, api_key=api_key).api_key
+        self._client: Optional[ModelClient] = None
 
     @property
-    def client(self) -> anthropic.Anthropic:
+    def client(self) -> ModelClient:
         if self._client is None:
-            self._client = anthropic.Anthropic(api_key=self.api_key)
+            self._client = ModelClient("matching", config=self.ai_config, api_key=self.api_key)
         return self._client
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -413,7 +415,6 @@ class JobMatcher:
 
         try:
             response = self.client.messages.create(
-                model="claude-haiku-4-5-20251001",   # fast + cheap for batch scoring
                 max_tokens=512,
                 system=[
                     {

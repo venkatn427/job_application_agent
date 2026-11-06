@@ -857,7 +857,7 @@ input, select, textarea { font-family: inherit; }
     </button>
     <div class="topbar-title" id="topbar-title">
       <h1>Job Applications</h1>
-      <p id="topbar-sub">23 matches waiting — 10 are a great fit.</p>
+      <p id="topbar-sub">Loading saved jobs...</p>
     </div>
     <div class="topbar-right">
       <div class="credits-badge">
@@ -957,6 +957,11 @@ input, select, textarea { font-family: inherit; }
       <span id="filter-bar-queries"><strong>Job Title(s):</strong> Senior Data Engineer, Staff Data Engineer, Principal Data Engineer</span>
       <a href="#" class="edit-link">Edit in Profile</a>
       <span id="matches-fetch-time" style="margin-left:auto;font-size:10px;color:var(--text-3)"></span>
+      <select id="job-period" aria-label="First discovered date" onchange="loadMatches()">
+        <option value="all">All saved jobs</option><option value="today">Today</option>
+        <option value="yesterday">Yesterday</option><option value="week">This Week</option>
+        <option value="month">This Month</option>
+      </select>
       <button id="refresh-matches-btn" class="btn-sm" style="margin-left:8px;font-size:11px" onclick="refreshMatches()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         Refresh
@@ -1540,8 +1545,9 @@ async function loadAppliedJobs() {
 
 async function loadMatches() {
   try {
-    const data = await api('/api/jobs/matches');
+    const data = await api('/api/jobs/matches?period=' + document.getElementById('job-period').value);
     MATCHES = data.jobs || [];
+    document.getElementById('topbar-sub').textContent = `${data.total} saved jobs in this period (first discovered, Central time)`;
     document.getElementById('tab-matches-count').textContent = MATCHES.length;
     if (data.fetched_at) {
       const d = new Date(data.fetched_at);
@@ -1567,7 +1573,7 @@ async function refreshMatches() {
   try {
     const data = await api('/api/jobs/refresh-matches', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:'{}' });
-    MATCHES = data.jobs || [];
+    await loadMatches();
     document.getElementById('tab-matches-count').textContent = MATCHES.length;
     if (data.fetched_at) {
       const d = new Date(data.fetched_at);

@@ -123,11 +123,36 @@ def _get_login(creds: dict, platform: str) -> tuple[str, str]:
 # Platform-specific apply strategies
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _confirmed_submission(page, platform: str) -> bool:
+    """Require visible ATS confirmation; a completed click is not success."""
+    selectors = {
+        "greenhouse": "#application_confirmation, #application-confirmation",
+        "lever": ".application-confirmation, .application-success",
+    }
+    try:
+        page.wait_for_selector(selectors[platform], state="visible", timeout=15_000)
+        return True
+    except Exception:
+        logger.warning("%s submission could not be confirmed", platform)
+        return False
+
+
+def _contact_profile(profile: dict) -> dict:
+    personal = profile.get("personal", profile)
+    name = personal.get("name") or " ".join(
+        filter(None, (personal.get("first_name"), personal.get("last_name")))
+    )
+    return {**profile, **personal, "name": name,
+            "linkedin_url": personal.get("linkedin_url") or
+            profile.get("professional", {}).get("linkedin_url", "")}
+
+
 class _GreenhouseApplier:
     """Apply via Greenhouse Jobboard embed."""
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
+        profile = _contact_profile(profile)
         # Click Apply button if present
         try:
             page.wait_for_selector("a#app-link, a.btn-apply, a[data-role='apply']",
@@ -138,7 +163,7 @@ class _GreenhouseApplier:
             pass  # may already be on form
 
         # Fill name
-        self._fill_if_exists(page, "#first_name", profile.get("name", "").split()[0])
+        self._fill_if_exists(page, "#first_name", next(iter(profile.get("name", "").split()), ""))
         self._fill_if_exists(page, "#last_name", " ".join(profile.get("name", "").split()[1:]))
         self._fill_if_exists(page, "#email", profile.get("email", ""))
         self._fill_if_exists(page, "#phone", profile.get("phone", ""))
@@ -167,8 +192,7 @@ class _GreenhouseApplier:
         _human_delay(1000, 2000)
         try:
             page.click("input[type='submit'], button[type='submit']")
-            page.wait_for_load_state("networkidle", timeout=15_000)
-            return True
+            return _confirmed_submission(page, "greenhouse")
         except Exception as e:
             logger.error("Greenhouse submit failed: %s", e)
             return False
@@ -188,6 +212,7 @@ class _LeverApplier:
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
+        profile = _contact_profile(profile)
         try:
             page.wait_for_selector(".template-btn-submit, a.postings-btn",
                                    timeout=10_000)
@@ -214,8 +239,7 @@ class _LeverApplier:
         _human_delay(1000, 2000)
         try:
             page.click("input[type='submit'], button[type='submit']")
-            page.wait_for_load_state("networkidle", timeout=15_000)
-            return True
+            return _confirmed_submission(page, "lever")
         except Exception as e:
             logger.error("Lever submit failed: %s", e)
             return False
@@ -551,10 +575,31 @@ class _GenericApplier:
         "location":      "location",
     }
 
+    @staticmethod
+    def _flatten(profile: dict) -> dict:
+        """Flatten nested profile.json → {first_name, last_name, email, phone, ...}."""
+        p = profile.get("personal", profile)  # support both nested and flat
+        name = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+        flat = {
+            "first_name":    p.get("first_name", ""),
+            "last_name":     p.get("last_name", ""),
+            "name":          name,
+            "email":         p.get("email", ""),
+            "phone":         p.get("phone", ""),
+            "location":      p.get("city", ""),
+            "linkedin_url":  profile.get("professional", {}).get("linkedin_url", ""),
+            "github_url":    profile.get("professional", {}).get("github_url", ""),
+            "portfolio_url": profile.get("professional", {}).get("portfolio_url", ""),
+        }
+        # Also keep any top-level flat keys that already exist
+        for k, v in profile.items():
+            if isinstance(v, str) and k not in flat:
+                flat[k] = v
+        return flat
+
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
-        profile["first_name"] = (profile.get("name") or "").split()[0]
-        profile["last_name"] = " ".join((profile.get("name") or "").split()[1:])
+        profile = self._flatten(profile)
 
         for fragment, key in self._FIELD_MAP.items():
             value = profile.get(key, "")
@@ -595,28 +640,159 @@ class _GenericApplier:
 
 class _DiceApplier:
     """
-    Dice Easy Apply — delegates to the existing submitter.py logic which
-    reads profile.json and answers all screening questions correctly.
+    Dice Easy Apply:
+    1. Login with stored credentials (two-step: email → Continue → password → Sign In)
+    2. Navigate to job detail, click Easy Apply
+    3. Fill multi-step application form from profile
+    4. Upload resume, submit
     """
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
-        from pathlib import Path as _Path
-        import sys, os
+        import time
 
-        # submitter.py path
-        sub_dir = _Path(__file__).parent
-        if str(sub_dir) not in sys.path:
-            sys.path.insert(0, str(sub_dir))
+        email, password = _get_login(creds, "dice")
+        if not email:
+            email, password = _get_login(creds, "generic")
 
-        try:
-            from submitter import DiceSubmitter
-            submitter = DiceSubmitter(profile_path=str(sub_dir / "profile.json"))
-            return submitter.apply(page=page, resume_path=resume_path)
-        except Exception as e:
-            logger.error("Dice submitter error: %s — falling back to generic", e)
-            return _GenericApplier().apply(page, profile, resume_path,
-                                           cover_letter_path, creds)
+        job_url = page.url
+
+        # ── Step 1: Login ─────────────────────────────────────────────────────
+        if email and password:
+            try:
+                page.goto("https://www.dice.com/dashboard/login",
+                          wait_until="domcontentloaded", timeout=20_000)
+                _human_delay(800, 1200)
+
+                # Fill email
+                email_el = page.query_selector("input[name='email'], input[type='email']")
+                if email_el and email_el.is_visible():
+                    email_el.fill(email)
+                    _human_delay(300, 600)
+
+                # Click Continue with email
+                for sel in ["button[type='submit']", "button:has-text('Continue')"]:
+                    try:
+                        btn = page.query_selector(sel)
+                        if btn and btn.is_visible():
+                            btn.click(); break
+                    except Exception:
+                        pass
+                _human_delay(1500, 2500)
+
+                # Fill password (second step)
+                pw_el = page.query_selector("input[type='password']")
+                if pw_el and pw_el.is_visible():
+                    pw_el.fill(password)
+                    _human_delay(300, 600)
+                    for sel in ["button[type='submit']", "button:has-text('Sign In')"]:
+                        try:
+                            btn = page.query_selector(sel)
+                            if btn and btn.is_visible():
+                                btn.click(); break
+                        except Exception:
+                            pass
+                    _human_delay(2000, 3000)
+
+                logger.info("Dice login complete, URL: %s", page.url)
+            except Exception as e:
+                logger.warning("Dice login failed: %s — continuing anyway", e)
+
+        # ── Step 2: Navigate to job ───────────────────────────────────────────
+        if job_url not in page.url:
+            page.goto(job_url, wait_until="domcontentloaded", timeout=20_000)
+            _human_delay(1500, 2500)
+
+        # ── Step 3: Click Easy Apply ──────────────────────────────────────────
+        applied = False
+        for sel in [
+            "button[data-testid='apply-button-top']",
+            "button:has-text('Easy Apply')",
+            "button:has-text('Apply Now')",
+            "a:has-text('Easy Apply')",
+            "a:has-text('Apply Now')",
+        ]:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    _human_delay(1500, 2500)
+                    applied = True
+                    break
+            except Exception:
+                pass
+
+        if not applied:
+            logger.warning("No Easy Apply button found — falling back to generic form fill")
+
+        # ── Step 4: Fill application form (multi-step) ────────────────────────
+        flat = _GenericApplier._flatten(profile)
+
+        for _step in range(6):  # up to 6 form pages
+            _human_delay(800, 1200)
+
+            # Fill standard fields
+            field_map = {
+                "first_name": flat.get("first_name", ""),
+                "last_name":  flat.get("last_name", ""),
+                "email":      flat.get("email", ""),
+                "phone":      flat.get("phone", ""),
+                "name":       flat.get("name", ""),
+            }
+            for fragment, value in field_map.items():
+                if not value:
+                    continue
+                for attr in ("name", "id", "placeholder", "data-testid"):
+                    sel = f"input[{attr}*='{fragment}' i]"
+                    try:
+                        el = page.query_selector(sel)
+                        if el and el.is_visible() and not el.input_value():
+                            el.fill(value)
+                            _human_delay(100, 300)
+                            break
+                    except Exception:
+                        pass
+
+            # Upload resume if file input present
+            if resume_path and Path(resume_path).exists():
+                try:
+                    for inp in page.query_selector_all("input[type='file']"):
+                        accept = inp.get_attribute("accept") or ""
+                        if "pdf" in accept or "doc" in accept or not accept:
+                            inp.set_input_files(str(resume_path))
+                            _human_delay(800, 1500)
+                            break
+                except Exception:
+                    pass
+
+            # Try Next / Continue / Submit
+            clicked_next = False
+            for sel in [
+                "button:has-text('Next')",
+                "button:has-text('Continue')",
+                "button[type='submit']",
+                "button:has-text('Submit')",
+                "input[type='submit']",
+            ]:
+                try:
+                    btn = page.query_selector(sel)
+                    if btn and btn.is_visible():
+                        btn.click()
+                        _human_delay(1200, 2000)
+                        clicked_next = True
+                        # If we hit Submit, we're done
+                        if "submit" in sel.lower():
+                            logger.info("Dice apply: submitted on step %d", _step)
+                            return True
+                        break
+                except Exception:
+                    pass
+
+            if not clicked_next:
+                break
+
+        # Final check — URL changed away from job detail = likely submitted
+        return job_url not in page.url
 
 
 class _ZipRecruiterApplier:
@@ -720,12 +896,18 @@ class AutoApplier:
     @property
     def profile(self) -> dict:
         if self._profile is None:
-            if not self.profile_path.exists():
-                raise FileNotFoundError(
-                    f"Candidate profile not found: {self.profile_path}. "
-                    "Run the pipeline first to generate it."
-                )
-            self._profile = json.loads(self.profile_path.read_text())
+            path = self.profile_path
+            if not path.exists():
+                # Fall back to submission/profile.json (the user's saved profile)
+                fallback = Path(__file__).parent / "profile.json"
+                if fallback.exists():
+                    path = fallback
+                else:
+                    raise FileNotFoundError(
+                        f"Candidate profile not found: {self.profile_path}. "
+                        "Run the pipeline first to generate it."
+                    )
+            self._profile = json.loads(path.read_text())
         return self._profile
 
     @property

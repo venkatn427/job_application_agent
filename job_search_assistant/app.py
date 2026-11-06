@@ -4,6 +4,7 @@ import sys
 
 # ── Path setup ─────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # ── Streamlit Page Config ──────────────────────────────────────────────────
 st.set_page_config(
@@ -51,25 +52,17 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # API Key status
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if api_key and api_key != "your_anthropic_api_key_here":
-        st.success("✓ Claude Connected")
+    # Keys are supplied through the environment or the main settings dashboard.
+    from pipeline.llm import resolve
+    ai_settings = resolve("assistant")
+    if ai_settings.api_key:
+        st.success(f"✓ {ai_settings.provider} connected ({ai_settings.model})")
     else:
-        st.warning("⚠ Anthropic key not set")
-        with st.expander("Set API Key"):
-            key_input = st.text_input("Anthropic API Key", type="password",
-                                      placeholder="sk-ant-...")
-            if st.button("Save Key") and key_input:
-                os.environ["ANTHROPIC_API_KEY"] = key_input
-                env_path = os.path.join(os.path.dirname(__file__), ".env")
-                with open(env_path, "w") as f:
-                    f.write(f"ANTHROPIC_API_KEY={key_input}\n")
-                st.success("Key saved!")
-                st.rerun()
+        st.warning("AI key not configured")
+        st.caption("Set the provider key in .env and choose models in config/settings.yaml.")
 
     st.markdown("---")
-    st.caption("Built with Streamlit + Claude")
+    st.caption("Built with Streamlit + configurable AI")
 
 # ── Route to Page ──────────────────────────────────────────────────────────
 if page == "📊 Dashboard":

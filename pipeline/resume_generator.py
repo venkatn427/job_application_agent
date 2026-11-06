@@ -16,7 +16,7 @@ import logging
 from typing import Optional
 from dataclasses import dataclass, field
 
-import anthropic
+from pipeline.llm import ModelClient, resolve
 
 from .profile_analyzer import CandidateProfile
 from .apify_scraper import JobListing
@@ -143,15 +143,16 @@ class ResumeGenerator:
     to reduce costs significantly when processing many jobs.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-6"):
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, ai_config=None):
+        self.ai_config = ai_config
+        self.api_key = resolve("resume", config=ai_config, api_key=api_key).api_key
         self.model = model
-        self._client: Optional[anthropic.Anthropic] = None
+        self._client: Optional[ModelClient] = None
 
     @property
-    def client(self) -> anthropic.Anthropic:
+    def client(self) -> ModelClient:
         if self._client is None:
-            self._client = anthropic.Anthropic(api_key=self.api_key)
+            self._client = ModelClient("resume", config=self.ai_config, api_key=self.api_key, model=self.model)
         return self._client
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -219,8 +220,7 @@ class ResumeGenerator:
         jd_text = self._jd_to_prompt(job)
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
+            response = ModelClient("cover_letter", config=self.ai_config).messages.create(
                 max_tokens=1024,
                 system=[
                     {
@@ -256,7 +256,6 @@ class ResumeGenerator:
         """Call Claude with prompt caching on system + profile."""
         page_target = "1 page (under 5 years experience)" if years_exp < 5 else "2 pages"
         response = self.client.messages.create(
-            model=self.model,
             max_tokens=4096,
             system=[
                 {
@@ -290,7 +289,7 @@ class ResumeGenerator:
         # Detect truncated output (ran out of tokens mid-JSON)
         if response.stop_reason == "max_tokens":
             raise RuntimeError(
-                "Claude response was truncated (max_tokens reached). "
+                "AI response was truncated (max_tokens reached). "
                 "Increase max_tokens or shorten the profile/JD."
             )
         return response.content[0].text.strip()

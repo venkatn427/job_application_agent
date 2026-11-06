@@ -2,13 +2,12 @@
 Apply Engine
 ------------
 PlaywrightEngine  — local Chromium via sync_playwright, no Claude dependency.
-ClaudeFieldAdvisor — optional AI layer for unknown form fields (requires ANTHROPIC_API_KEY).
+FieldAdvisor      — optional routed AI layer for unknown form fields.
 ScreeningMemory   — save/reuse screening Q&A across applications via local FTS5 memory.
 ResumeAdapter     — AI mode: tailor resume + cover letter per job; non-AI: use master files.
 
-All browser automation runs locally. Claude API is only called when:
-  1. ANTHROPIC_API_KEY is set (in .env or via UI settings)
-  2. A form field cannot be answered from profile.json
+All browser automation runs locally. AI is optional and uses configured task
+routes for field answers, resume tailoring, and cover letters.
 """
 
 import hashlib
@@ -197,11 +196,10 @@ def detect_login_wall(engine: PlaywrightEngine) -> Optional[str]:
 
 # ── ClaudeFieldAdvisor ────────────────────────────────────────────────────────
 
-class ClaudeFieldAdvisor:
+class FieldAdvisor:
     """
-    Optional AI layer — only instantiated when ANTHROPIC_API_KEY is set.
+    Optional AI layer using task routes from config/settings.yaml.
     Answers form fields that cannot be mapped from profile.json.
-    Uses claude-haiku-5-5 (cheapest/fastest) for single-field answers.
     """
 
     _SYSTEM = (
@@ -210,15 +208,15 @@ class ClaudeFieldAdvisor:
         "Be concise. Return exactly the answer text with no explanation."
     )
 
-    def __init__(self, api_key: str, model: str = "claude-haiku-5-5"):
+    def __init__(self, api_key: str = None, model: str = None):
         self._api_key = api_key
         self._model = model
         self._client = None
 
     def _get_client(self):
         if self._client is None:
-            import anthropic
-            self._client = anthropic.Anthropic(api_key=self._api_key)
+            from pipeline.llm import ModelClient
+            self._client = ModelClient("fields", api_key=self._api_key, model=self._model)
         return self._client
 
     def answer_field(self, field_label: str, field_type: str,
@@ -239,7 +237,6 @@ class ClaudeFieldAdvisor:
                 "What should the candidate answer? Return only the answer, nothing else."
             )
             msg = self._get_client().messages.create(
-                model=self._model,
                 max_tokens=200,
                 system=self._SYSTEM,
                 messages=[{"role": "user", "content": prompt}],
@@ -247,7 +244,7 @@ class ClaudeFieldAdvisor:
             answer = msg.content[0].text.strip()
             return answer if answer else None
         except Exception as e:
-            logger.warning("ClaudeFieldAdvisor failed for '%s': %s", field_label, e)
+            logger.warning("FieldAdvisor failed for '%s': %s", field_label, e)
             return None
 
     def tailor_resume(self, master_resume_text: str, job_description: str,
@@ -265,8 +262,8 @@ class ClaudeFieldAdvisor:
                 "Return ONLY valid JSON with keys: summary (string), skills (string list), "
                 "experience (list of {company, title, dates, bullets[]}), education (list of {school, degree, year})."
             )
-            msg = self._get_client().messages.create(
-                model="claude-sonnet-5-5",
+            from pipeline.llm import ModelClient
+            msg = ModelClient("resume", api_key=self._api_key).messages.create(
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -296,8 +293,8 @@ class ClaudeFieldAdvisor:
                 "Be specific, professional, and enthusiastic. No placeholders. "
                 "Return only the letter body (no greeting line, no signature)."
             )
-            msg = self._get_client().messages.create(
-                model="claude-haiku-5-5",
+            from pipeline.llm import ModelClient
+            msg = ModelClient("cover_letter", api_key=self._api_key).messages.create(
                 max_tokens=600,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -307,10 +304,14 @@ class ClaudeFieldAdvisor:
             return ""
 
 
-def get_advisor() -> Optional[ClaudeFieldAdvisor]:
-    """Return ClaudeFieldAdvisor if ANTHROPIC_API_KEY is set, else None."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    return ClaudeFieldAdvisor(key) if key else None
+# Backwards-compatible public name for existing integrations.
+ClaudeFieldAdvisor = FieldAdvisor
+
+
+def get_advisor() -> Optional[FieldAdvisor]:
+    """Return the routed field advisor when its provider key is configured."""
+    from pipeline.llm import is_configured
+    return FieldAdvisor() if is_configured("fields") else None
 
 
 # ── ScreeningMemory ───────────────────────────────────────────────────────────
@@ -438,11 +439,11 @@ class ResumeAdapter:
         master_text = self._extract_pdf_text(self.master_resume)
 
         # Tailor resume
-        _step("Generating tailored resume with Claude…")
+        _step("Generating tailored resume with AI…")
         tailored = self._advisor.tailor_resume(master_text, job_description, job_title, company)
 
         # Generate cover letter
-        _step("Generating cover letter with Claude…")
+        _step("Generating cover letter with AI…")
         cl_text = self._advisor.write_cover_letter({}, job_title, company, job_description)
 
         # Render to PDF

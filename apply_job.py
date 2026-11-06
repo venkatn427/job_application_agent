@@ -2,11 +2,11 @@
 apply_job.py — Standalone CLI for human-like job application.
 --------------------------------------------------------------
 Works fully offline (no Claude session needed).
-If ANTHROPIC_API_KEY is set, uses AI to tailor resume + answer unknown fields.
+If a configured AI provider key is set, uses AI to tailor resume + answer unknown fields.
 Otherwise, runs 100% locally with master resume + memory lookup.
 
 Usage:
-    # Basic dry-run (navigate + detect ATS, no submission):
+    # Basic dry-run (detect ATS offline, no submission):
     python apply_job.py --url "https://jobs.lever.co/company/job-id" --dry-run
 
     # Full apply with portal credentials:
@@ -83,7 +83,7 @@ def run_apply(url: str, portal_id: int = None, resume: str = None,
               job_title: str = "", company: str = "", submission_approved: bool = False) -> dict:
     """
     Full apply flow. Returns result dict.
-    dry_run: None = read AUTO_APPLY_DRY_RUN env; True/False = override.
+    dry_run: defaults to True; skips preparation and browser launch.
     """
     if dry_run is None:
         dry_run = True
@@ -96,6 +96,12 @@ def run_apply(url: str, portal_id: int = None, resume: str = None,
         logger.info(msg)
 
     _step(f"Starting apply: {url}")
+
+    if dry_run:
+        from submission.auto_apply import detect_platform
+        _step("DRY RUN — skipping resume preparation and browser launch")
+        return {"success": False, "platform": detect_platform(url),
+                "url": url, "error": "dry_run", "steps": steps}
 
     # Resolve credentials
     extra_creds = _resolve_portal_creds(portal_id)
@@ -111,33 +117,6 @@ def run_apply(url: str, portal_id: int = None, resume: str = None,
         _step(f"Resume: {Path(resume_pdf).name}")
     if cover_letter_pdf:
         _step(f"Cover letter: {Path(cover_letter_pdf).name}")
-
-    # Dry run before browser launch
-    if dry_run:
-        _step("DRY RUN — detecting ATS platform without submitting")
-        try:
-            from submission.apply_engine import PlaywrightEngine, detect_login_wall
-            from submission.auto_apply import detect_platform
-            platform = detect_platform(url)
-            _step(f"Platform detected: {platform}")
-
-            engine = PlaywrightEngine(headless=headless)
-            engine.launch()
-            try:
-                engine.navigate(url)
-                wall = detect_login_wall(engine)
-                _step(f"Login wall: {wall or 'none'}")
-                current = engine.current_url()
-                _step(f"Final URL: {current}")
-            finally:
-                engine.close()
-        except Exception as e:
-            _step(f"Detection error: {e}")
-
-        return {
-            "success": False, "platform": "dry_run",
-            "url": url, "error": "dry_run", "steps": steps,
-        }
 
     # Real apply via AutoApplier
     from submission.auto_apply import AutoApplier
@@ -178,7 +157,7 @@ def main():
     parser.add_argument("--title",      default="",     help="Job title (for AI resume tailoring)")
     parser.add_argument("--company",    default="",     help="Company name (for AI tailoring)")
     parser.add_argument("--dry-run",    action="store_true",
-                        help="Navigate + detect only; do not submit")
+                        help="Detect ATS offline; do not prepare resumes or launch a browser")
     parser.add_argument("--no-headless", action="store_true",
                         help="Show browser window (useful for debugging/OTP)")
     parser.add_argument("--submit", action="store_true",

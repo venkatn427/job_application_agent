@@ -20,6 +20,7 @@ Usage:
     python api_server.py --port 8080
 """
 
+from pipeline.llm import is_configured
 import argparse
 import json
 import logging
@@ -298,10 +299,12 @@ def _score_matches(jobs: list) -> list:
     """Add match_score to each job using keyword matcher if profile is available."""
     try:
         from pipeline.job_matcher import JobMatcher
-        from apply_today import _load_candidate_profile
+        from pipeline.profile_analyzer import ProfileAnalyzer
 
-        profile = _load_candidate_profile()
-        matcher = JobMatcher(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        profile = ProfileAnalyzer(cache_dir=ROOT / 'data').load_cached()
+        if profile is None:
+            return [{**j, 'match_score': None} for j in jobs]
+        matcher = JobMatcher()
 
         class _FakeJob:
             pass
@@ -315,7 +318,7 @@ def _score_matches(jobs: list) -> list:
             fake.location = j.get("location", "")
             fake.requirements = []
             try:
-                score = matcher.keyword_score(fake, profile)
+                score = matcher.score_job(fake, profile).score
             except Exception:
                 score = 0
             scored.append({**j, "match_score": score})
@@ -328,22 +331,27 @@ def _score_matches(jobs: list) -> list:
 
 @app.route("/api/jobs/matches")
 def jobs_matches():
-    """Return cached job matches, optionally re-scored against the profile."""
-    cache = _load_matches_cache()
-    jobs = cache.get("jobs", [])
-    if not jobs:
-        return jsonify({"jobs": [], "total": 0, "fetched_at": "", "queries": []})
+    """Return discovery history filtered by first-seen date."""
+    from pipeline.job_store import JobStore
+    store = JobStore(ROOT / 'data/discovered_jobs.db')
+    if not store.list():
+        cache = _load_matches_cache()
+        if cache.get('jobs'):
+            store.save(cache['jobs'], cache.get('fetched_at') or None)
+    try:
+        jobs = store.list(request.args.get('period', 'all'))
+    except ValueError:
+        return jsonify({'error': 'Invalid period'}), 400
     scored = _score_matches(jobs)
     return jsonify({
         "jobs":       scored,
         "total":      len(scored),
-        "fetched_at": cache.get("fetched_at", ""),
-        "queries":    cache.get("queries", []),
+        "fetched_at": max((j['last_seen'] for j in jobs), default=''),
+        "queries":    _read_settings().get('job_search', {}).get('queries', []),
     })
 
 
-@app.route("/api/jobs/refresh-matches", methods=["POST"])
-def refresh_matches():
+def _legacy_refresh_matches():
     """
     Refresh the job matches cache by running all free scrapers.
     Runs synchronously — may take 10-30s.
@@ -416,6 +424,17 @@ def refresh_matches():
 # Live job search
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.route('/api/jobs/refresh-matches', methods=['POST'])
+def refresh_matches():
+    from pipeline.job_store import collect_jobs
+    try:
+        count = collect_jobs(ROOT)
+        return jsonify({'ok': True, 'fetched': count})
+    except Exception:
+        log.exception('Job collection failed')
+        return jsonify({'error': 'Job collection failed; previous jobs retained'}), 502
+
+
 @app.route("/api/jobs/search")
 def jobs_search():
     q      = request.args.get("q", "").strip()
@@ -480,7 +499,7 @@ def jobs_search():
             from pipeline.job_matcher import JobMatcher
             from apply_today import _load_candidate_profile
             profile = _load_candidate_profile()
-            matcher = JobMatcher(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+            matcher = JobMatcher()
             for j in unique:
                 score = matcher.keyword_score(j, profile)
                 scored.append((score, j))
@@ -554,14 +573,14 @@ def prepare_job():
     kw_list     = []
 
     # Try AI-tailored resume; fall back to master
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if is_configured("resume"):
         try:
             from apply_today import _load_candidate_profile
             from pipeline.resume_generator import ResumeGenerator
             from pipeline.document_builder import build_pdf, build_docx, build_cover_letter_docx
 
             profile = _load_candidate_profile()
-            gen = ResumeGenerator(api_key=os.environ["ANTHROPIC_API_KEY"])
+            gen = ResumeGenerator()
             tailored = gen.generate_resume(job, profile, match_score=score)
             cover_text = gen.generate_cover_letter(job, profile)
 
@@ -614,11 +633,11 @@ def prepare_job():
         "resume_pdf":  resume_pdf,
         "cover_letter": cl_path,
         "keywords":    kw_list,
-        "ai_tailored": bool(os.environ.get("ANTHROPIC_API_KEY") and kw_list),
+        "ai_tailored": bool(is_configured("resume") and kw_list),
         "message":     (
             f"AI-tailored resume + cover letter ready for {title} @ {company}"
             if kw_list else
-            f"Master resume prepared for {title} @ {company}. Add ANTHROPIC_API_KEY for AI tailoring."
+            f"Master resume prepared for {title} @ {company}. Configure an AI provider key for tailoring."
         ),
     })
 
@@ -699,7 +718,8 @@ def get_config():
         "use_claude":       s.get("matching", {}).get("use_claude_scoring", True),
         "cover_letter":     s.get("resume", {}).get("generate_cover_letter", True),
         "cover_letter_tone":s.get("resume", {}).get("cover_letter_tone", "professional"),
-        "model":            s.get("resume", {}).get("model", "claude-sonnet-4-6"),
+        "model":            s.get("resume", {}).get("model"),
+        "ai":               s.get("ai", {}),
         "exclude_titles":   s.get("filters", {}).get("exclude_titles", []),
         "min_salary":       s.get("filters", {}).get("min_salary", 0),
         "greenhouse_companies": s.get("job_search", {}).get("greenhouse_companies", []),
@@ -710,6 +730,17 @@ def get_config():
 def save_config():
     body = request.get_json(force=True) or {}
     s = _read_settings()
+    if "ai" in body:
+        from pipeline.llm import resolve
+        try:
+            ai = body["ai"]
+            if not isinstance(ai, dict):
+                raise ValueError("ai must be an object")
+            for task in set(ai.get("routes", {})) | {"default"}:
+                resolve(task, config=ai)
+        except (ValueError, TypeError, AttributeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        s["ai"] = ai
     js = s.setdefault("job_search", {})
     mt = s.setdefault("matching", {})
     rv = s.setdefault("resume", {})
@@ -735,7 +766,7 @@ def save_config():
 # ─────────────────────────────────────────────────────────────────────────────
 
 ENV_PATH = ROOT / ".env"
-ALLOWED_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SERP_API_KEY"}
+ALLOWED_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY", "SERP_API_KEY"}
 
 def _read_env_keys() -> dict:
     env = {}
@@ -990,7 +1021,7 @@ def job_board():
     try:
         from pipeline.job_matcher import JobMatcher, CandidateProfile
         profile = CandidateProfile()
-        matcher = JobMatcher(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        matcher = JobMatcher(use_claude=False)
         for j in results:
             if not j.get("match_score"):
                 desc = (j.get("title","") + " " + j.get("description",""))
@@ -1249,9 +1280,9 @@ def apply_job():
         return jsonify({"error": "submission_approved=true is required for live submission"}), 400
 
     if dry_run:
-        from submission.auto_apply import AutoApplier
-        result = AutoApplier(dry_run=True).apply(job_url)
+        from apply_job import run_apply
         task_id = _new_task({"title": job_title, "company": company, "url": job_url})
+        result = run_apply(url=job_url, dry_run=True)
         _update_task(task_id, status="done", result=result)
         return jsonify({"task_id": task_id, "status": "done"})
 
@@ -1282,9 +1313,13 @@ def apply_job():
                 resume_pdf = str(ROOT / "data" / "master_resume" / "resume.pdf")
                 cover_letter_pdf = None
 
+            _profile_path = ROOT / "data" / "candidate_profile.json"
+            if not _profile_path.exists():
+                _profile_path = ROOT / "submission" / "profile.json"
+
             from submission.auto_apply import AutoApplier
             applier = AutoApplier(
-                profile_path=str(ROOT / "data" / "candidate_profile.json"),
+                profile_path=str(_profile_path),
                 credentials_path=str(ROOT / "submission" / ".secrets.env"),
                 resume_pdf_path=resume_pdf,
                 cover_letter_path=cover_letter_pdf,

@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 def run_pipeline(force_profile_refresh: bool = False) -> None:
     """Execute the full job application pipeline."""
     from pipeline.workflow import Pipeline, PipelineConfig
+    from pipeline.job_store import collect_jobs
+    try:
+        collect_jobs(ROOT_DIR)
+    except Exception:
+        logger.exception('Daily discovery failed; existing history retained')
 
     settings_path = Path(os.environ.get("PIPELINE_SETTINGS_PATH", "config/settings.yaml"))
     if not settings_path.is_absolute():
@@ -174,6 +179,13 @@ def build_scheduler():
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
+def next_run_time(job, timezone):
+    """Pending APScheduler jobs have no next_run_time until startup."""
+    return getattr(job, "next_run_time", None) or job.trigger.get_next_fire_time(
+        None, datetime.now(timezone)
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Job Application Pipeline Scheduler",
@@ -204,12 +216,10 @@ Examples:
 
     if args.status:
         print("\nScheduled Jobs:")
-        scheduler.start(paused=True)
         for job in scheduler.get_jobs():
-            next_run = job.next_run_time
+            next_run = next_run_time(job, scheduler.timezone)
             print(f"  * {job.name}")
             print(f"    Next run: {next_run}")
-        scheduler.shutdown(wait=False)
         return
 
     if args.run_now:
@@ -220,7 +230,7 @@ Examples:
     try:
         # Print scheduled jobs
         for job in scheduler.get_jobs():
-            logger.info("Scheduled: %s (next: %s)", job.name, job.next_run_time)
+            logger.info("Scheduled: %s (next: %s)", job.name, next_run_time(job, scheduler.timezone))
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopped.")

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field, asdict
 
-import anthropic
+from pipeline.llm import ModelClient, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -228,16 +228,17 @@ class ProfileAnalyzer:
     Caches the profile to disk so it is only re-parsed when the source changes.
     """
 
-    def __init__(self, api_key: Optional[str] = None, cache_dir: Optional[Path] = None):
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    def __init__(self, api_key: Optional[str] = None, cache_dir: Optional[Path] = None, ai_config=None):
+        self.ai_config = ai_config
+        self.api_key = resolve("profile", config=ai_config, api_key=api_key).api_key
         self.cache_dir = cache_dir or Path("data")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._client: Optional[anthropic.Anthropic] = None
+        self._client: Optional[ModelClient] = None
 
     @property
-    def client(self) -> anthropic.Anthropic:
+    def client(self) -> ModelClient:
         if self._client is None:
-            self._client = anthropic.Anthropic(api_key=self.api_key)
+            self._client = ModelClient("profile", config=self.ai_config, api_key=self.api_key)
         return self._client
 
     # ── Cache helpers ────────────────────────────────────────────────────────
@@ -341,10 +342,9 @@ class ProfileAnalyzer:
         Uses prompt caching on the system prompt to reduce token costs
         on repeated calls (e.g. force-refresh runs).
         """
-        logger.info("Parsing profile with Claude...")
+        logger.info("Parsing profile with configured AI model...")
         try:
             response = self.client.messages.create(
-                model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=[
                     {

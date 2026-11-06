@@ -61,9 +61,7 @@ resume:
   # Cover letter tone: professional | enthusiastic | concise
   cover_letter_tone: professional
 
-  # Claude model for resume generation
-  # Options: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001
-  model: claude-sonnet-4-6
+  # AI models are selected by task routes in the ai section below.
 
 # ── File Paths ────────────────────────────────────────────────────────────────
 paths:
@@ -126,3 +124,32 @@ filters:
   job_types:
     - full-time
     - remote
+
+# Each task can select any named model. Secrets are environment variable names.
+ai:
+  models:
+    default:
+      provider: auto  # anthropic key first, otherwise openai; no key = local fallback
+    # Examples: uncomment a model and point one or more routes at its name.
+    # openai_writer:
+    #   provider: openai
+    #   model: gpt-5-mini
+    #   api_key_env: OPENAI_API_KEY
+    # claude_reviewer:
+    #   provider: anthropic
+    #   model: claude-sonnet-4-6
+    #   api_key_env: ANTHROPIC_API_KEY
+    # local:
+    #   provider: openai_compatible
+    #   model: your-local-model
+    #   base_url: http://localhost:11434/v1
+    #   api_key_env: LOCAL_LLM_API_KEY
+  routes:
+    default: default
+    profile: default
+    matching: default
+    resume: default
+    cover_letter: default
+    fields: default
+    assistant: default
+  timeout: 60

@@ -46,6 +46,7 @@ class PipelineConfig:
 
     def __init__(self, settings: dict):
         s = settings
+        self.ai_config = s.get("ai", {})
 
         # Job search
         js = s.get("job_search", {})
@@ -65,7 +66,7 @@ class PipelineConfig:
         resume = s.get("resume", {})
         self.generate_cover_letter: bool = resume.get("generate_cover_letter", True)
         self.cover_letter_tone: str = resume.get("cover_letter_tone", "professional")
-        self.resume_model: str = resume.get("model", "claude-sonnet-4-6")
+        self.resume_model: str = resume.get("model")
 
         # Paths — base_dir is resolved by from_yaml() relative to the YAML file;
         # when PipelineConfig is constructed directly (tests), it defaults to CWD.
@@ -224,12 +225,13 @@ class Pipeline:
         # Core components
         self.db = PipelineDB(self.config.db_path)
         self.fetcher = JobFetcher(apify_token=os.environ.get("APIFY_API_TOKEN"))
-        self.profile_analyzer = ProfileAnalyzer(cache_dir=self.config.data_dir)
+        self.profile_analyzer = ProfileAnalyzer(cache_dir=self.config.data_dir, ai_config=self.config.ai_config)
         self.matcher = JobMatcher(
             threshold=self.config.match_threshold,
             use_claude=self.config.use_claude_scoring,
+            ai_config=self.config.ai_config,
         )
-        self.resume_gen = ResumeGenerator(model=self.config.resume_model)
+        self.resume_gen = ResumeGenerator(model=self.config.resume_model, ai_config=self.config.ai_config)
         self.drive = DriveManager()
         self.tracker = SheetsTracker(
             local_csv_path=self.config.log_dir / "applications.csv"

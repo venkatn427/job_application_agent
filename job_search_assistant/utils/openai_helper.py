@@ -1,38 +1,25 @@
 import os
 import json
-import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL = "claude-opus-4-6"
-_client = None
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.llm import ModelClient
 
 
-def get_client():
-    global _client
-    if _client is None:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key or api_key == "your_anthropic_api_key_here":
-            raise ValueError("ANTHROPIC_API_KEY not set. Add it to your .env file.")
-        _client = anthropic.Anthropic(api_key=api_key)
-    return _client
+def get_client(task="assistant"):
+    return ModelClient(task)
 
 
-def chat(system_prompt: str, user_prompt: str, temperature: float = 1.0) -> str:
-    client = get_client()
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=4096,
-        thinking={"type": "adaptive"},
-        system=system_prompt,
+def chat(system_prompt: str, user_prompt: str, temperature: float = 1.0, task: str = "assistant") -> str:
+    response = get_client(task).messages.create(
+        max_tokens=4096, system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
-    ) as stream:
-        final = stream.get_final_message()
-    # Extract text blocks only
-    return "\n".join(
-        block.text for block in final.content if block.type == "text"
-    ).strip()
+    )
+    return response.content[0].text.strip()
 
 
 # ── Resume ──────────────────────────────────────────────────────────────────
@@ -68,7 +55,7 @@ def rewrite_resume(resume_text: str, job_description: str,
         "Return only the rewritten resume text."
     )
     user = f"RESUME:\n{resume_text}\n\nJOB DESCRIPTION:\n{job_description}"
-    return chat(system, user)
+    return chat(system, user, task="resume")
 
 
 def improve_bullets(resume_text: str) -> str:
@@ -77,7 +64,7 @@ def improve_bullets(resume_text: str) -> str:
         "more impactful: start with strong action verbs, quantify results, and "
         "highlight impact. Return only the improved resume text."
     )
-    return chat(system, resume_text)
+    return chat(system, resume_text, task="resume")
 
 
 # ── Cover Letter ─────────────────────────────────────────────────────────────
@@ -96,7 +83,7 @@ def generate_cover_letter(resume_text: str, company: str, role: str,
         f"RESUME SUMMARY:\n{resume_text[:2000]}\n\n"
         f"JOB DESCRIPTION:\n{job_description}"
     )
-    return chat(system, user)
+    return chat(system, user, task="cover_letter")
 
 
 # ── Recruiter Email ──────────────────────────────────────────────────────────

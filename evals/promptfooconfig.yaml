@@ -1,0 +1,30 @@
+description: Synthetic application facts through production model routing
+prompts:
+  - '{{question}}'
+providers:
+  - id: file://provider.py:call_api
+    label: configured-fields-route
+    config:
+      task: fields
+      # model_alias: openai_writer  # duplicate provider entries to compare registry models
+  - id: file://provider.py:call_api
+    label: configured-profile-route
+    config:
+      task: profile
+tests:
+  - vars:
+      question: 'Candidate facts: current title is Software Engineer. What is the current title?'
+    assert:
+      - type: contains
+        value: Software Engineer
+  - vars:
+      question: 'Candidate facts: name is Sample Candidate; email is sample@example.test. Return JSON with only name and email.'
+    assert:
+      - type: is-json
+      - type: contains
+        value: sample@example.test
+  - vars:
+      question: 'Candidate facts: Python experience is 3 years. How many years of Python experience? Answer with a single integer.'
+    assert:
+      - type: equals
+        value: '3'

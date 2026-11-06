@@ -2,8 +2,8 @@
 Apply Today
 -----------
 Scrapes jobs posted today from free APIs (Greenhouse + Lever + RemoteOK),
-scores them against the candidate profile, tailors resumes with Claude
-(if ANTHROPIC_API_KEY is set), and submits applications via Playwright.
+scores them against the candidate profile, tailors resumes with configured AI models
+(when provider keys are set), and submits applications via Playwright.
 Tracks every application in data/applications.db.
 
 Usage:
@@ -13,6 +13,7 @@ Usage:
     python apply_today.py                    # Apply to all matches ≥70
 """
 
+from pipeline.llm import is_configured
 import argparse
 import json
 import logging
@@ -48,14 +49,13 @@ def _load_profile() -> dict:
 def _load_candidate_profile():
     """
     Load or build a CandidateProfile.
-    Without ANTHROPIC_API_KEY, falls back to a minimal profile built from
+    Without an AI profile provider key, falls back to a minimal profile built from
     submission/profile.json so keyword scoring still works.
     """
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if is_configured("profile"):
         from pipeline.profile_analyzer import ProfileAnalyzer
         resume_path = ROOT / "data" / "master_resume" / "resume.pdf"
         analyzer = ProfileAnalyzer(
-            api_key=os.environ["ANTHROPIC_API_KEY"],
             cache_dir=ROOT / "data",
         )
         return analyzer.analyze(resume_path=resume_path if resume_path.exists() else None)
@@ -228,7 +228,7 @@ def _scrape_today(queries: list[str]) -> list:
 def _score_jobs(jobs: list, profile, threshold: int) -> list:
     """Return jobs scored ≥threshold, sorted by score desc."""
     from pipeline.job_matcher import JobMatcher
-    matcher = JobMatcher(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    matcher = JobMatcher()
     scored = []
     for job in jobs:
         score = matcher.keyword_score(job, profile)
@@ -241,7 +241,7 @@ def _score_jobs(jobs: list, profile, threshold: int) -> list:
 def _tailor_resume(job, profile, score: int) -> tuple[Path, Path, str]:
     """
     Generate tailored resume + cover letter for a job.
-    Falls back to master resume if no ANTHROPIC_API_KEY.
+    Falls back to the master resume when no AI resume key is configured.
     Returns (resume_pdf_path, cover_letter_path, keywords_json).
     """
     import json as _json
@@ -249,16 +249,16 @@ def _tailor_resume(job, profile, score: int) -> tuple[Path, Path, str]:
     output_dir = ROOT / "output" / "applications" / _safe_name(job.company, job.title)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not is_configured("resume"):
         # No API key — use master resume as-is
         master = ROOT / "data" / "master_resume" / "resume.pdf"
-        logger.info("No ANTHROPIC_API_KEY — using master resume for %s", job.title)
+        logger.info("No AI provider key — using master resume for %s", job.title)
         return master, None, "[]"
 
     from pipeline.resume_generator import ResumeGenerator
     from pipeline.document_builder import build_pdf, build_docx, build_cover_letter_docx
 
-    gen = ResumeGenerator(api_key=os.environ["ANTHROPIC_API_KEY"])
+    gen = ResumeGenerator()
     tailored = gen.generate_resume(job, profile, match_score=score)
     cover_text = gen.generate_cover_letter(job, profile)
 
