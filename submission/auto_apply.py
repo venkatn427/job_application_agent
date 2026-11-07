@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -57,6 +58,51 @@ def detect_platform(url: str) -> str:
         if any(p in url_lower for p in patterns):
             return platform
     return "generic"
+
+
+def application_scope(page, platform, on_step=lambda message: None):
+    """Follow employer Apply links and find supported embedded application forms."""
+    import re
+    from urllib.parse import urljoin, urlsplit
+    for _ in range(3):
+        embeds = page.locator('iframe[src*="greenhouse.io"]')
+        for index in range(embeds.count()):
+            element = embeds.nth(index)
+            host = (urlsplit(element.get_attribute('src') or '').hostname or '').lower()
+            if host.endswith('.greenhouse.io'):
+                frame = element.element_handle().content_frame()
+                if frame:
+                    frame.wait_for_selector('#first_name', timeout=20000)
+                    on_step('Found the embedded Greenhouse application form.')
+                    return frame, 'greenhouse'
+        for frame in page.frames:
+            host = (urlsplit(frame.url).hostname or '').lower()
+            if host.endswith('.greenhouse.io') and ('embed' in frame.url or 'job_app' in frame.url):
+                frame.wait_for_selector('#first_name', timeout=20000)
+                on_step('Found the embedded Greenhouse application form.')
+                return frame, 'greenhouse'
+        if platform != 'generic':
+            return page, platform
+        links = page.get_by_role('link', name=re.compile(r'^apply(?: now| for (?:this|the) (?:role|job)| for this position)?$', re.I))
+        link = next((links.nth(i) for i in range(links.count()) if links.nth(i).is_visible()), None)
+        if link is None:
+            # Embedded forms may load after the surrounding employer page.
+            try:
+                page.locator('iframe[src*="greenhouse.io"]').first.wait_for(state='attached', timeout=3000)
+                continue
+            except Exception:
+                return page, detect_platform(page.url)
+        href = link.get_attribute('href') or ''
+        on_step('Opening the role’s application form…')
+        if href and not href.startswith('#'):
+            destination = urljoin(page.url, href)
+            if urlsplit(destination).scheme != 'https':
+                raise ValueError('Application link must use HTTPS')
+            page.goto(destination, wait_until='domcontentloaded', timeout=30000)
+        else:
+            link.click(timeout=5000)
+        platform = detect_platform(page.url)
+    return page, platform
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,13 +198,14 @@ class _GreenhouseApplier:
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
+        saved_profile = profile
         profile = _contact_profile(profile)
         # Click Apply button if present
         try:
-            page.wait_for_selector("a#app-link, a.btn-apply, a[data-role='apply']",
-                                   timeout=10_000)
-            page.click("a#app-link, a.btn-apply, a[data-role='apply']")
-            _human_delay(800, 1500)
+            links = page.locator("a#app-link, a.btn-apply, a[data-role='apply']")
+            if links.count() and links.first.is_visible():
+                links.first.click()
+                _human_delay(800, 1500)
         except Exception:
             pass  # may already be on form
 
@@ -171,7 +218,7 @@ class _GreenhouseApplier:
         # Upload resume
         if resume_path and resume_path.exists():
             try:
-                page.set_input_files("input[name='resume']", str(resume_path))
+                page.set_input_files("#resume, input[name='resume']", str(resume_path))
                 _human_delay(500, 1000)
             except Exception:
                 logger.warning("Could not upload resume to Greenhouse form")
@@ -179,7 +226,7 @@ class _GreenhouseApplier:
         # Upload cover letter
         if cover_letter_path and cover_letter_path.exists():
             try:
-                page.set_input_files("input[name='cover_letter']", str(cover_letter_path))
+                page.set_input_files("#cover_letter, input[name='cover_letter']", str(cover_letter_path))
                 _human_delay(500, 1000)
             except Exception:
                 pass
@@ -188,10 +235,26 @@ class _GreenhouseApplier:
         self._fill_if_exists(page, "#job_application_answers_attributes_0_text_value",
                              profile.get("linkedin_url", ""))
 
+        from submission.form_fields import fill_known_fields, missing_required
+        fill_known_fields(page, saved_profile)
+        missing = missing_required(page)
+        if missing:
+            review = getattr(self, 'on_form_ready', None)
+            if review:
+                review(missing)
+                missing = missing_required(page)
+            if missing:
+                logger.warning('Application has %d unanswered required fields', len(missing))
+                return False
+
         # Submit
         _human_delay(1000, 2000)
         try:
-            page.click("input[type='submit'], button[type='submit']")
+            button = page.get_by_role('button', name=re.compile(r'^submit(?: application)?$', re.I))
+            if button.count():
+                button.first.click(timeout=10000)
+            else:
+                page.locator("input[type='submit']:visible, button[type='submit']:visible").first.click(timeout=10000)
             return _confirmed_submission(page, "greenhouse")
         except Exception as e:
             logger.error("Greenhouse submit failed: %s", e)
@@ -599,6 +662,10 @@ class _GenericApplier:
 
     def apply(self, page, profile: dict, resume_path: Optional[Path],
               cover_letter_path: Optional[Path], creds: dict) -> bool:
+        # A newsletter or marketing form is not a job application.
+        if not page.locator('input[type="file"], input[autocomplete="given-name"], input[name*="first_name"], input[id="first_name"]').count():
+            logger.warning('No recognizable application form on the current page')
+            return False
         profile = self._flatten(profile)
 
         for fragment, key in self._FIELD_MAP.items():
@@ -874,6 +941,9 @@ class AutoApplier:
         extra_creds: Optional[dict] = None,
         on_step=None,
         submission_approved: bool = False,
+        portal_id: Optional[int] = None,
+        on_login_ready=None,
+        on_form_ready=None,
     ):
         self.profile_path = Path(profile_path)
         self.credentials_path = credentials_path
@@ -886,6 +956,9 @@ class AutoApplier:
             else os.environ.get("AUTO_APPLY_DRY_RUN", "true").lower() != "false"
         )
         self.submission_approved = submission_approved is True
+        self.portal_id = portal_id
+        self.on_login_ready = on_login_ready
+        self.on_form_ready = on_form_ready
         self._extra_creds: dict = extra_creds or {}
         self._on_step = on_step or (lambda msg: None)
         self._profile: Optional[dict] = None
@@ -907,7 +980,8 @@ class AutoApplier:
                         f"Candidate profile not found: {self.profile_path}. "
                         "Run the pipeline first to generate it."
                     )
-            self._profile = json.loads(path.read_text())
+            from submission.identity import current_profile
+            self._profile = current_profile(json.loads(path.read_text()))
         return self._profile
 
     @property
@@ -915,6 +989,13 @@ class AutoApplier:
         if self._creds is None:
             base = _load_credentials(self.credentials_path)
             self._creds = {**base, **self._extra_creds}
+            from submission.identity import application_email
+            email = application_email()
+            if email:
+                for key in list(self._creds):
+                    if key.endswith('_EMAIL') and self._creds[key].casefold() != email.casefold():
+                        self._creds.pop(key, None)
+                        self._creds.pop(key[:-6] + '_PASSWORD', None)
         return self._creds
 
     # ── Main entry point ──────────────────────────────────────────────────────
@@ -977,14 +1058,38 @@ class AutoApplier:
 
             page = context.new_page()
             try:
+                if self.portal_id:
+                    from submission.portal_store import PortalStore
+                    from submission.portal_accounts import PortalAccountAgent
+                    from submission.identity import ROOT, application_email
+                    store = PortalStore(ROOT / 'data/applications.db', ROOT / 'data/.portal_key')
+                    portal = store.get_portal(self.portal_id)
+                    if not portal or (application_email() and portal['username'].casefold() != application_email().casefold()):
+                        raise ValueError('Selected portal login does not match the application email')
+                    self._on_step('Opening saved portal login…')
+                    page.goto(portal['url'], wait_until='domcontentloaded', timeout=30000)
+                    account = PortalAccountAgent(store)
+                    try:
+                        state = account.fill(page, self.portal_id, self.profile, 'login')
+                        if state['status'] == 'form_filled':
+                            account.submit_account_form(page, self.portal_id, 'login')
+                    except ValueError:
+                        self._on_step('This portal needs manual login in the visible browser.')
+                    if self.on_login_ready:
+                        self.on_login_ready()
+                    else:
+                        raise ValueError('Complete portal login in the dashboard before continuing')
                 self._on_step(f"Navigating to {job_url[:70]}…")
                 page.goto(job_url, wait_until="domcontentloaded", timeout=30_000)
                 _human_delay(1500, 3000)
 
+                scope, platform = application_scope(page, detect_platform(page.url), self._on_step)
+
                 self._on_step(f"Running {platform} applier…")
-                applier = _PLATFORM_APPLIERS.get(platform, _PLATFORM_APPLIERS["generic"])
+                applier = type(_PLATFORM_APPLIERS.get(platform, _PLATFORM_APPLIERS["generic"]))()
+                applier.on_form_ready = self.on_form_ready
                 success = applier.apply(
-                    page=page,
+                    page=scope,
                     profile=self.profile,
                     resume_path=resume,
                     cover_letter_path=cover,
@@ -996,7 +1101,7 @@ class AutoApplier:
                     "success": success,
                     "platform": platform,
                     "url": page.url,
-                    "error": None,
+                    "error": None if success else 'Application was not confirmed. Required fields or a portal-specific step may need attention.',
                 }
                 logger.info("Apply result: %s", result)
                 return result

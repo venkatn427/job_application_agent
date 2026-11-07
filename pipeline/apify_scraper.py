@@ -240,7 +240,7 @@ class GreenhouseScraper:
     def search(self, companies: list[str], query: str = "", max_results: int = 25) -> list[JobListing]:
         jobs: list[JobListing] = []
         for company_slug in companies:
-            if len(jobs) >= max_results:
+            if max_results is not None and len(jobs) >= max_results:
                 break
             try:
                 url = f"https://boards-api.greenhouse.io/v1/boards/{company_slug}/jobs?content=true"
@@ -250,7 +250,7 @@ class GreenhouseScraper:
                     continue
                 data = resp.json().get("jobs", [])
                 for j in data:
-                    if len(jobs) >= max_results:
+                    if max_results is not None and len(jobs) >= max_results:
                         break
                     title = j.get("title", "")
                     if query and query.lower() not in title.lower():
@@ -281,7 +281,7 @@ class LeverScraper:
     def search(self, companies: list[str], query: str = "", max_results: int = 25) -> list[JobListing]:
         jobs: list[JobListing] = []
         for company_slug in companies:
-            if len(jobs) >= max_results:
+            if max_results is not None and len(jobs) >= max_results:
                 break
             try:
                 url = f"https://api.lever.co/v0/postings/{company_slug}?mode=json"
@@ -293,7 +293,7 @@ class LeverScraper:
                 if not isinstance(data, list):
                     data = data.get("data", [])
                 for j in data:
-                    if len(jobs) >= max_results:
+                    if max_results is not None and len(jobs) >= max_results:
                         break
                     title = j.get("text", "")
                     if query and query.lower() not in title.lower():
@@ -713,6 +713,7 @@ class JobFetcher:
         lever_companies: list[str] | None = None,
         sources: list[str] | None = None,
         exclude_titles: list[str] | None = None,
+        all_public: bool = False,
     ) -> list[JobListing]:
         """
         Scrape all configured sources and return deduplicated listings.
@@ -749,7 +750,7 @@ class JobFetcher:
         if "greenhouse" in all_sources and greenhouse_companies:
             for query in queries:
                 try:
-                    jobs = self.greenhouse.search(greenhouse_companies, query, max_per_source)
+                    jobs = self.greenhouse.search(greenhouse_companies, query, None if all_public else max_per_source)
                     results.extend(self._dedup(jobs))
                     logger.info("Greenhouse: +%d jobs", len(jobs))
                 except Exception as e:
@@ -758,7 +759,7 @@ class JobFetcher:
         if "lever" in all_sources and lever_companies:
             for query in queries:
                 try:
-                    jobs = self.lever.search(lever_companies, query, max_per_source)
+                    jobs = self.lever.search(lever_companies, query, None if all_public else max_per_source)
                     results.extend(self._dedup(jobs))
                     logger.info("Lever: +%d jobs", len(jobs))
                 except Exception as e:

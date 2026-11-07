@@ -153,6 +153,91 @@ existing records without erasing discovery history.
 
 ## Application submission
 
+The dashboard and Job Board load saved jobs immediately from SQLite on page load.
+**Fetch jobs** requests live portal results and merges them into saved discovery
+history. Board fetches are saved too, before display filters; duplicate URLs update
+existing records. Empty or failed fetches retain previously saved jobs. Public Greenhouse and Lever boards return all matching roles
+from configured companies. Other sources retain their configured/API limits.
+
+**Prepare** creates documents only. Choose **Apply in browser**, select **Local**,
+and disable dry-run to start a visible Playwright browser. Matching saved portal
+credentials for the current email are selected automatically.
+Local mode uses the master resume and never calls AI. Complete login, CAPTCHA, or
+verification in the browser, then click **Continue after login** in the dashboard;
+the application continues in the same browser session. Live application submission
+requires the existing confirmation. Saved portal logins must use the current email.
+Employer Apply links and embedded Greenhouse forms are followed automatically.
+Known profile fields and screening answers are filled without AI. Missing required
+answers pause the visible browser and show **Continue after completing form**;
+complete these fields before continuing. Recording consent and unknown facts are
+left for the applicant.
+
+### Portal accounts without AI
+
+`scripts/setup_portal_account.py` generates a unique password locally and saves it
+in the existing encrypted portal store before opening a registration form. Repeated
+setup for the same HTTPS origin and email reuses the password. Existing saved
+passwords are retained. Passwords are never printed in command output.
+
+```sh
+.venv/bin/python scripts/setup_portal_account.py --name "Employer portal" --url "https://portal.example.com/register"
+```
+
+Replace the URL with the employer's actual registration page. Add `--open` to fill
+a visible form, and `--submit-account` to submit the registration form. Use
+`--action login --open --submit-account` with a login URL to reuse saved credentials.
+The helper supports single-page email/password forms. Multi-step forms, CAPTCHA,
+terms checkboxes, and verification may need completion in the visible browser.
+Only a supplied `--confirmation-selector` produces a confirmed success status;
+otherwise the result requires verification or review. This command never applies
+to a job. Creating accounts needs internet even when AI is disabled.
+
+The local `data/application_identity.json` sets the email for profiles, account
+setup, application credentials, and notifications. The application team selects
+stored credentials only for the exact portal origin and current email, so old
+logins and unrelated employer credentials are not reused. Gmail connected to Codex
+is available during assisted setup; it does not install Gmail OAuth credentials
+into this standalone Python app. Email links/codes can be completed manually in
+the visible browser. SMTP notifications still require valid sender credentials.
+
+### Separate application agents: offline and AI
+
+The new `agents/application_team.py` coordinator runs separate profile, matching,
+document, screening, and submission workers. These are Python workers with clear
+handoffs, not persistent background processes. This CLI is independent of the
+existing dashboard and legacy Claude SDK agents.
+
+Prepare a local job list without network access or AI calls:
+
+```sh
+.venv/bin/python scripts/run_application_team.py --mode offline --jobs config/application_jobs.example.json
+```
+
+Offline preparation uses keyword matching, the master resume, and exact saved
+screening answers. Unknown questions remain unanswered for review. The saved
+`submission/profile.json` overrides cached contact details, including email.
+An optional cached profile supplies work history and skills; populate those facts
+for useful matching and AI tailoring.
+
+Use configured AI routes for matching, a tailored resume PDF, and unknown screening
+questions:
+
+```sh
+.venv/bin/python scripts/run_application_team.py --mode ai --jobs path/to/jobs.json
+```
+
+AI mode requires credentials for `matching`, `resume`, and `fields`; missing keys
+stop the run. Output defaults to `output/application-team.json`, with generated
+PDFs under `output/application-team/`. Reports contain private candidate data.
+Per-job failures are isolated and return a nonzero CLI status.
+
+Both modes prepare by default. To explicitly approve online submissions, add
+`--submit` to either command using a reviewed job list with real employer URLs.
+Offline mode then uses browser automation without AI; submission itself requires
+internet access. Only recommended jobs with all supplied screening questions
+answered proceed. Custom questions discovered on employer forms may still need
+manual intervention. The example list is synthetic and is for preparation only.
+
 Submission defaults to an offline dry run. It detects the platform from the URL
 without preparing resumes, calling an AI provider, or launching a browser:
 

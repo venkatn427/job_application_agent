@@ -143,8 +143,10 @@ class Notifier:
         slack_webhook_url: Optional[str] = None,
         discord_webhook_url: Optional[str] = None,
     ):
-        self.email_to = email_to or os.environ.get("NOTIFY_EMAIL_TO", "")
-        self.email_from = email_from or os.environ.get("NOTIFY_EMAIL_FROM", "")
+        from submission.identity import application_email
+        identity_email = application_email()
+        self.email_to = identity_email or email_to or os.environ.get("NOTIFY_EMAIL_TO", "")
+        self.email_from = identity_email or email_from or os.environ.get("NOTIFY_EMAIL_FROM", "")
         self.email_password = email_password or os.environ.get("NOTIFY_EMAIL_PASSWORD", "")
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port

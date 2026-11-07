@@ -381,6 +381,8 @@ class ProfileAnalyzer:
 
     @staticmethod
     def _dict_to_profile(data: dict) -> CandidateProfile:
+        from submission.identity import current_profile
+        data = current_profile(data)
         def _list(key: str) -> list:
             val = data.get(key) or []
             return val if isinstance(val, list) else []

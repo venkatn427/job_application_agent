@@ -55,16 +55,18 @@ class JobStore:
         return [{**json.loads(row[0]), 'first_seen': row[1], 'last_seen': row[2]} for row in rows]
 
 
-def collect_jobs(root):
+def collect_jobs(root, *, return_jobs=False, all_public=False):
     from .workflow import PipelineConfig
     from .apify_scraper import JobFetcher
     config = PipelineConfig.from_yaml(Path(root)/'config/settings.yaml')
     jobs = JobFetcher().fetch_all(queries=config.queries, locations=config.locations,
         max_per_source=config.max_per_source, sources=config.sources,
         greenhouse_companies=config.greenhouse_companies,
-        lever_companies=config.lever_companies, exclude_titles=config.exclude_titles)
-    JobStore(Path(root)/'data/discovered_jobs.db').save([j.to_dict() for j in jobs])
-    return len(jobs)
+        lever_companies=config.lever_companies, exclude_titles=config.exclude_titles,
+        **({'all_public': True} if all_public else {}))
+    payload = [j.to_dict() for j in jobs]
+    JobStore(Path(root)/'data/discovered_jobs.db').save(payload)
+    return payload if return_jobs else len(jobs)
 
 
 if __name__ == '__main__':

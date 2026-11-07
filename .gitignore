@@ -22,6 +22,8 @@ logs/
 scraped_jobs_raw.json
 jobs.db
 *.db
+*.db-wal
+*.db-shm
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -34,6 +36,7 @@ env/
 dist/
 build/
 .eggs/
+node_modules/
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store

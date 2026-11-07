@@ -857,7 +857,7 @@ input, select, textarea { font-family: inherit; }
     </button>
     <div class="topbar-title" id="topbar-title">
       <h1>Job Applications</h1>
-      <p id="topbar-sub">Loading saved jobs...</p>
+      <p id="topbar-sub">Loading saved jobs…</p>
     </div>
     <div class="topbar-right">
       <div class="credits-badge">
@@ -964,7 +964,7 @@ input, select, textarea { font-family: inherit; }
       </select>
       <button id="refresh-matches-btn" class="btn-sm" style="margin-left:8px;font-size:11px" onclick="refreshMatches()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        Refresh
+        Fetch jobs
       </button>
     </div>
 
@@ -1452,7 +1452,11 @@ async function loadInbox() {
 
 // ── API helpers ───────────────────────────────────────────────
 async function api(path, opts = {}) {
-  const r = await fetch(path, opts);
+  const headers = new Headers(opts.headers || {});
+  if (typeof opts.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const r = await fetch(path, {...opts, headers});
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
@@ -1547,13 +1551,8 @@ async function loadMatches() {
   try {
     const data = await api('/api/jobs/matches?period=' + document.getElementById('job-period').value);
     MATCHES = data.jobs || [];
-    document.getElementById('topbar-sub').textContent = `${data.total} saved jobs in this period (first discovered, Central time)`;
+    document.getElementById('topbar-sub').textContent = `${MATCHES.length} saved jobs loaded from the database`;
     document.getElementById('tab-matches-count').textContent = MATCHES.length;
-    if (data.fetched_at) {
-      const d = new Date(data.fetched_at);
-      document.getElementById('matches-fetch-time').textContent =
-        'Last refreshed: ' + d.toLocaleString();
-    }
     renderJobs();
   } catch(e) {
     console.warn('Matches unavailable:', e.message);
@@ -1564,28 +1563,25 @@ async function loadMatches() {
 async function refreshMatches() {
   const btn = document.getElementById('refresh-matches-btn');
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:5px"></div> Refreshing…';
-  const grid = document.getElementById('job-grid');
-  grid.innerHTML = `<div style="grid-column:1/-1;padding:40px;text-align:center">
-    <div class="spinner" style="margin:0 auto 12px"></div>
-    <div style="font-size:13px;color:var(--text-3)">Scraping live job boards…</div>
-  </div>`;
+  btn.innerHTML = '<div class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:5px"></div> Fetching…';
   try {
     const data = await api('/api/jobs/refresh-matches', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:'{}' });
+    document.getElementById('job-period').value = 'all';
     await loadMatches();
+    if (data.notice) document.getElementById('topbar-sub').textContent += ' · ' + data.notice;
     document.getElementById('tab-matches-count').textContent = MATCHES.length;
     if (data.fetched_at) {
       const d = new Date(data.fetched_at);
       document.getElementById('matches-fetch-time').textContent =
-        'Last refreshed: ' + d.toLocaleString();
+        'Fetched: ' + d.toLocaleString();
     }
     renderJobs();
   } catch(e) {
-    grid.innerHTML = `<div style="grid-column:1/-1;padding:20px;color:var(--red);font-size:13px">Refresh failed: ${e.message}</div>`;
+    showToast('Fetch failed; saved jobs retained. ' + e.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh';
+    btn.innerHTML = 'Fetch jobs';
   }
 }
 
@@ -1621,7 +1617,7 @@ function showPrepareModal(job, state, result) {
   // success
   const kw = (result.keywords || []).slice(0, 10);
   content.innerHTML = `
-    <h2 style="color:var(--green)">✓ Application Ready</h2>
+    <h2 style="color:var(--green)">✓ Documents prepared</h2>
     <p class="sub">${job.title} at ${job.company}${result.app_id ? ' · App #' + result.app_id : ''}</p>
     <div style="font-size:12px;font-weight:500;margin-bottom:8px;color:var(--text-2)">Files prepared:</div>
     ${result.resume_pdf ? `<div class="prepare-file">
@@ -1636,6 +1632,7 @@ function showPrepareModal(job, state, result) {
     ${kw.length ? `<div style="font-size:11px;font-weight:500;margin-top:12px;margin-bottom:4px;color:var(--text-2)">ATS keywords targeted:</div>
     <div class="prepare-kw">${kw.map(k=>`<span>${k}</span>`).join('')}</div>` : ''}
     <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn-primary" style="flex:1" onclick='closePrepareModal();applyNow(${JSON.stringify(job).replace(/'/g,"&#39;")})'>Apply in browser</button>
       <button class="btn-primary" style="flex:1" onclick="closePrepareModal()">Done</button>
       ${result.app_id ? `<button class="btn-sm" style="flex:1" onclick="closePrepareModal();navigate(document.querySelector('[data-page=dashboard]'))">View in Dashboard</button>` : ''}
     </div>`;
@@ -1696,7 +1693,7 @@ function renderJobs() {
   if (!list.length) {
     const msg = _activeTab === 'applied'
       ? 'No applications tracked yet. Use Job Search → Prepare Application to start.'
-      : 'No matches loaded yet. Click <strong>Refresh</strong> to scrape live job boards.';
+      : 'No jobs loaded. Click <strong>Fetch jobs</strong> to retrieve fresh portal results.';
     grid.innerHTML = `<div style="grid-column:1/-1;padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">${msg}</div>`;
     return;
   }
@@ -2059,6 +2056,15 @@ async function saveConfig() {
 // ── Job Board ─────────────────────────────────────────────────
 let BOARD_JOBS = [];
 
+async function loadSavedBoard() {
+  try {
+    const data = await api('/api/jobs/board/saved');
+    BOARD_JOBS = data.jobs || [];
+    document.getElementById('board-count').textContent = data.total ?? BOARD_JOBS.length;
+    renderBoardJobs(BOARD_JOBS);
+  } catch(e) { showToast('Saved jobs unavailable: ' + e.message); }
+}
+
 async function loadBoard() {
   const q      = document.getElementById('board-query')?.value.trim() || 'Data Engineer';
   const sponsor= document.getElementById('board-sponsor')?.checked ? '1' : '0';
@@ -2072,11 +2078,10 @@ async function loadBoard() {
 
   try {
     const data = await api(`/api/jobs/board?q=${encodeURIComponent(q)}&sponsor=${sponsor}&remote=${remote}&limit=60`);
-    BOARD_JOBS = data.jobs || [];
-    document.getElementById('board-count').textContent = data.total ?? BOARD_JOBS.length;
-    renderBoardJobs(BOARD_JOBS);
+    await loadSavedBoard();
   } catch(e) {
-    grid.innerHTML = `<div style="grid-column:1/-1;padding:20px;color:var(--red);font-size:13px">Load failed: ${e.message}</div>`;
+    renderBoardJobs(BOARD_JOBS);
+    showToast('Fetch failed; saved jobs retained. ' + e.message);
   }
 }
 
@@ -2282,50 +2287,49 @@ function closeApplyModal() {
 }
 
 async function applyNow(job) {
-  // Fetch portals for selection
-  let portals = PORTALS_CACHE;
-  if (!portals.length) {
-    try { const d = await api('/api/portals'); portals = d.portals || []; } catch(e) {}
-  }
+  // Automatically use only current-email credentials for this job's portal.
+  let portals = [];
+  try {
+    const d = await api('/api/portals?job_url=' + encodeURIComponent(job.url || job.apply_url || ''));
+    portals = d.portals || [];
+  } catch(e) { showToast('Portal logins unavailable: ' + e.message); }
 
   const modal = document.getElementById('apply-modal');
   const content = document.getElementById('apply-modal-content');
   modal.style.display = 'flex';
 
-  // Portal select state
-  const opts = portals.map(p =>
-    `<option value="${p.id}">${p.name} (${p.username})</option>`
-  ).join('');
+  const portalId = portals[0]?.id || null;
 
   content.innerHTML = `
     <h3 style="margin:0 0 16px;font-size:16px">Apply to ${job.title || 'this job'}</h3>
     <div style="font-size:12px;color:var(--text-2);margin-bottom:16px">${job.company || ''}</div>
-    <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Portal credentials</label>
-    <select id="apply-portal-sel" class="input-field" style="margin-bottom:16px">
-      <option value="">No login (anonymous / Greenhouse / Lever)</option>
-      ${opts}
+    <label style="font-size:12px;display:block;margin-bottom:4px">Application mode</label>
+    <select id="apply-mode" class="input-field" style="margin-bottom:16px">
+      <option value="local">Local — visible browser, no AI</option>
+      <option value="ai">AI — tailor documents using configured provider</option>
     </select>
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);margin-bottom:16px;cursor:pointer">
       <input type="checkbox" id="apply-dryrun" checked style="accent-color:var(--green)">
       Dry-run (detect only, do not submit)
     </label>
     <div style="display:flex;gap:8px">
-      <button class="btn-primary" onclick="startApply(${JSON.stringify(job).replace(/"/g,'&quot;')})">Start Applying</button>
+      <button class="btn-primary" onclick="startApply(${JSON.stringify(job).replace(/"/g,'&quot;')}, ${portalId})">Start Applying</button>
       <button class="btn-sm" onclick="closeApplyModal()" style="background:var(--bg-2)">Cancel</button>
     </div>`;
 }
 
-async function startApply(job) {
+async function startApply(job, portalId = null) {
   const content   = document.getElementById('apply-modal-content');
-  const portalId  = document.getElementById('apply-portal-sel')?.value || null;
   const dryRun    = document.getElementById('apply-dryrun')?.checked;
+  const mode = document.getElementById('apply-mode')?.value || 'local';
   if (!dryRun && !confirm(`Submit a live application to ${job.title || 'this job'} at ${job.company || 'this company'}?`)) return;
 
   content.innerHTML = `
     <h3 style="margin:0 0 16px;font-size:16px">Applying to ${job.title || 'job'}…</h3>
     <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">${job.company || ''}</div>
     <div id="apply-steps" style="font-size:12px;color:var(--text-2);line-height:2;max-height:260px;overflow-y:auto"></div>
-    <div id="apply-status" style="margin-top:12px;font-size:13px;font-weight:600;color:var(--text-2)">Starting…</div>`;
+    <div id="apply-status" style="margin-top:12px;font-size:13px;font-weight:600;color:var(--text-2)">Starting…</div>
+    <button id="continue-login-btn" class="btn-primary" style="display:none;margin-top:12px">Continue after login</button>`;
 
   let taskId;
   try {
@@ -2335,12 +2339,18 @@ async function startApply(job) {
         url:       job.url || job.apply_url,
         title:     job.title,
         company:   job.company,
+        mode,
+        headless: mode !== 'local',
         portal_id: portalId ? parseInt(portalId) : null,
         dry_run:   dryRun !== false,
         submission_approved: dryRun === false,
       }),
     });
     taskId = r.task_id;
+    document.getElementById('continue-login-btn').onclick = async () => {
+      try { await api(`/api/jobs/apply/${taskId}/continue`, {method:'POST',body:'{}'}); }
+      catch(e) { showToast(e.message); }
+    };
   } catch(e) {
     document.getElementById('apply-status').textContent = '✗ Failed to start: ' + e.message;
     document.getElementById('apply-status').style.color = 'var(--red)';
@@ -2352,6 +2362,9 @@ async function startApply(job) {
   _applyPollTimer = setInterval(async () => {
     try {
       const t = await api(`/api/jobs/apply/${taskId}/status`);
+      const continueBtn = document.getElementById('continue-login-btn');
+      continueBtn.style.display = ['waiting_login','waiting_form'].includes(t.status) ? 'block' : 'none';
+      continueBtn.textContent = t.status === 'waiting_form' ? 'Continue after completing form' : 'Continue after login';
       const steps = t.steps || [];
       const stepsEl = document.getElementById('apply-steps');
       const statusEl = document.getElementById('apply-status');
@@ -2391,12 +2404,14 @@ async function startApply(job) {
     if (page === 'profile')  { loadProfile(); }
     if (page === 'settings') { loadKeyStatus(); loadConfig(); }
     if (page === 'portals')  { loadPortals(); }
+    if (page === 'board') { loadSavedBoard(); }
   };
 })();
 
 // ── Init ──────────────────────────────────────────────────────
 loadAppliedJobs();   // applied tab data
-loadMatches();       // job matches from cache → renderJobs
+loadMatches();       // load persisted results immediately; fetching remains explicit
+loadSavedBoard();
 loadStats();         // pipeline bars + stat cards
 loadInbox();         // email inbox from /api/inbox
 </script>

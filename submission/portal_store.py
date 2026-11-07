@@ -17,10 +17,31 @@ import json
 import logging
 import os
 import sqlite3
+import secrets
+import string
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
+
+
+def generate_password(length: int = 24) -> str:
+    """Generate a portal password locally, without AI or email credentials."""
+    if not 16 <= length <= 128:
+        raise ValueError('Password length must be between 16 and 128')
+    groups = (string.ascii_lowercase, string.ascii_uppercase, string.digits, '!@#$%*-_')
+    chars = [secrets.choice(group) for group in groups]
+    chars.extend(secrets.choice(''.join(groups)) for _ in range(length - len(chars)))
+    secrets.SystemRandom().shuffle(chars)
+    return ''.join(chars)
+
+
+def portal_origin(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('Portal URL must use HTTPS without embedded credentials')
+    return f'https://{parsed.hostname.lower()}:{parsed.port or 443}'
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +106,7 @@ class PortalStore:
     def _init_schema(self) -> None:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+        os.chmod(self.db_path, 0o600)
 
     @contextmanager
     def _conn(self):
@@ -209,3 +231,28 @@ class PortalStore:
                 (platform,)
             ).fetchone()
         return dict(row) if row else None
+
+    def find_for_url(self, url: str, username: str) -> Optional[dict]:
+        """Use exact origins and email, never share credentials across employers."""
+        origin = portal_origin(url)
+        for portal in self.list_portals():
+            try:
+                matches = portal_origin(portal['url']) == origin
+            except ValueError:
+                continue
+            if matches and portal['username'].casefold() == username.casefold():
+                return portal
+        return None
+
+    def prepare_account(self, name: str, url: str, email: str, platform=None) -> dict:
+        """Persist generated credentials before registration; reuse existing passwords."""
+        portal_origin(url)
+        email = email.strip()
+        if not name.strip() or '@' not in email or any(c.isspace() for c in email):
+            raise ValueError('Portal name and valid email are required')
+        existing = self.find_for_url(url, email)
+        if existing:
+            return {'id': existing['id'], 'created': False, 'status': 'credentials_saved'}
+        portal_id = self.add_portal(name.strip(), url, email, generate_password(), platform,
+                                    notes='Generated locally; account registration not yet confirmed')
+        return {'id': portal_id, 'created': True, 'status': 'credentials_saved'}

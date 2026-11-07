@@ -126,7 +126,7 @@ class ApiTests(unittest.TestCase):
 
     def test_prepare_without_resume_is_error_not_application(self):
         with patch.object(api_server, "ROOT", self.root), patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}), patch.object(api_server, "_tracker") as tracker:
-            response = self.client.post("/api/jobs/prepare", json={"title": "Engineer", "company": "Example"})
+            response = self.client.post("/api/jobs/prepare", json={"title": "Engineer", "company": "Example", "mode": "ai"})
         self.assertEqual(response.status_code, 422)
         tracker.assert_not_called()
 
@@ -142,7 +142,7 @@ class ApiTests(unittest.TestCase):
         tracker = Mock()
         tracker.add_application.return_value = 1
         with patch.object(api_server, "ROOT", self.root), patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test"}), patch("apply_today._load_candidate_profile", return_value=CandidateProfile()), patch.object(ResumeGenerator, "generate_resume", side_effect=fail_after_contract_check) as generate, patch.object(api_server, "_tracker", return_value=tracker):
-            response = self.client.post("/api/jobs/prepare", json={"title": "Engineer", "company": "Example"})
+            response = self.client.post("/api/jobs/prepare", json={"title": "Engineer", "company": "Example", "mode": "ai"})
         self.assertEqual(response.status_code, 200)
         generate.assert_called_once()
         self.assertFalse(response.json["ai_tailored"])

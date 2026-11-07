@@ -215,7 +215,7 @@ class JobMatcher:
         self.threshold = threshold
         self.use_claude = use_claude
         self.ai_config = ai_config
-        self.api_key = resolve("matching", config=ai_config, api_key=api_key).api_key
+        self.api_key = resolve("matching", config=ai_config, api_key=api_key).api_key if use_claude else None
         self._client: Optional[ModelClient] = None
 
     @property

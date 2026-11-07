@@ -304,7 +304,7 @@ def _score_matches(jobs: list) -> list:
         profile = ProfileAnalyzer(cache_dir=ROOT / 'data').load_cached()
         if profile is None:
             return [{**j, 'match_score': None} for j in jobs]
-        matcher = JobMatcher()
+        matcher = JobMatcher(use_claude=False)
 
         class _FakeJob:
             pass
@@ -428,8 +428,14 @@ def _legacy_refresh_matches():
 def refresh_matches():
     from pipeline.job_store import collect_jobs
     try:
-        count = collect_jobs(ROOT)
-        return jsonify({'ok': True, 'fetched': count})
+        from datetime import datetime, timezone
+        jobs = collect_jobs(ROOT, return_jobs=True, all_public=True)
+        stamp = datetime.now(timezone.utc).isoformat()
+        current = [{**job, 'last_seen': stamp} for job in jobs]
+        return jsonify({'ok': True, 'fetched': len(current), 'total': len(current),
+                        'jobs': _score_matches(current), 'fetched_at': stamp,
+                        'queries': _read_settings().get('job_search', {}).get('queries', []),
+                        'notice': 'Fresh results from configured sources. Public Greenhouse and Lever boards are uncapped; other portals may limit results or require access.'})
     except Exception:
         log.exception('Job collection failed')
         return jsonify({'error': 'Job collection failed; previous jobs retained'}), 502
@@ -541,12 +547,20 @@ def prepare_job():
     Returns: {output_dir, resume_pdf, cover_letter, keywords, app_id}
     """
     body = request.get_json(force=True) or {}
-    title   = body.get("title", "").strip()
-    company = body.get("company", "").strip()
-    url     = body.get("url", "").strip()
+    mode = body.get('mode', 'local')
+    if mode not in ('local', 'ai'):
+        return jsonify({'error': 'mode must be local or ai'}), 400
+    title   = (body.get("title") or "").strip()
+    company = (body.get("company") or "").strip()
+    url     = (body.get("url") or body.get('apply_url') or "").strip()
     desc    = body.get("description", "")
     source  = body.get("source", "")
-    score   = int(body.get("match_score", 0))
+    try:
+        score = int(body.get('match_score') or 0)
+        if not 0 <= score <= 100:
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        return jsonify({'error': 'match_score must be a number between 0 and 100'}), 400
 
     if not title or not company:
         return jsonify({"error": "title and company are required"}), 400
@@ -573,7 +587,7 @@ def prepare_job():
     kw_list     = []
 
     # Try AI-tailored resume; fall back to master
-    if is_configured("resume"):
+    if mode == 'ai' and is_configured("resume"):
         try:
             from apply_today import _load_candidate_profile
             from pipeline.resume_generator import ResumeGenerator
@@ -633,11 +647,11 @@ def prepare_job():
         "resume_pdf":  resume_pdf,
         "cover_letter": cl_path,
         "keywords":    kw_list,
-        "ai_tailored": bool(is_configured("resume") and kw_list),
+        "ai_tailored": bool(mode == 'ai' and kw_list),
         "message":     (
             f"AI-tailored resume + cover letter ready for {title} @ {company}"
             if kw_list else
-            f"Master resume prepared for {title} @ {company}. Configure an AI provider key for tailoring."
+            f"Master resume prepared for {title} @ {company} in {mode} mode."
         ),
     })
 
@@ -683,6 +697,8 @@ def save_profile():
             for k in fields:
                 if k in body[section]:
                     full[section][k] = body[section][k]
+    from submission.identity import current_profile
+    full = current_profile(full)
     with open(PROFILE_PATH, "w") as f:
         json.dump(full, f, indent=2)
     return jsonify({"ok": True})
@@ -1003,20 +1019,6 @@ def job_board():
     except Exception as e:
         log.debug("Dice board error: %s", e)
 
-    # Also pull from cached matches if query overlaps
-    cache_path = ROOT / "data" / "job_matches_cache.json"
-    if cache_path.exists():
-        try:
-            cached = json.loads(cache_path.read_text()).get("jobs", [])
-            q_low = query.lower()
-            for j in cached:
-                if any(w in (j.get("title","") + j.get("description","")).lower()
-                       for w in q_low.split() if len(w) > 2):
-                    j.setdefault("sponsor", _detect_sponsor(j.get("description","")))
-                    results.append(j)
-        except Exception:
-            pass
-
     # Score with job matcher
     try:
         from pipeline.job_matcher import JobMatcher, CandidateProfile
@@ -1028,6 +1030,9 @@ def job_board():
                 j["match_score"] = matcher.keyword_score(desc, profile)
     except Exception as e:
         log.debug("Board scoring error: %s", e)
+
+    from pipeline.job_store import JobStore
+    JobStore(ROOT / 'data/discovered_jobs.db').save(results)
 
     if sponsor:
         results = [j for j in results if j.get("sponsor")]
@@ -1044,7 +1049,22 @@ def job_board():
             deduped.append(j)
 
     deduped.sort(key=lambda j: j.get("match_score", 0), reverse=True)
-    return jsonify({"jobs": deduped[:limit], "total": len(deduped)})
+    return jsonify({"jobs": deduped, "total": len(deduped), 'saved': len(results)})
+
+
+@app.route('/api/jobs/board/saved', methods=['GET'])
+def saved_job_board():
+    """Load persisted jobs without scraping, browser launch, or AI."""
+    from pipeline.job_store import JobStore
+    jobs = JobStore(ROOT / 'data/discovered_jobs.db').list()
+    query = request.args.get('q', '').strip()
+    if query:
+        jobs = [job for job in jobs if _title_matches(job.get('title', ''), query)]
+    if request.args.get('sponsor') == '1':
+        jobs = [job for job in jobs if job.get('sponsor')]
+    if request.args.get('remote') == '1':
+        jobs = [job for job in jobs if 'remote' in (job.get('location') or '').lower()]
+    return jsonify({'jobs': jobs, 'total': len(jobs), 'from_database': True})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1071,6 +1091,24 @@ def _portal_store():
 def list_portals():
     try:
         portals = _portal_store().list_portals()
+        job_url = request.args.get('job_url')
+        if job_url:
+            from submission.portal_store import portal_origin
+            from submission.identity import application_email
+            try:
+                origin = portal_origin(job_url)
+            except ValueError:
+                return jsonify({'error': 'A valid HTTPS job URL is required'}), 400
+            email = application_email()
+            eligible = []
+            for portal in portals:
+                try:
+                    same_portal = portal_origin(portal['url']) == origin
+                except ValueError:
+                    continue
+                if same_portal and (not email or portal['username'].casefold() == email.casefold()):
+                    eligible.append(portal)
+            portals = eligible
         return jsonify({"portals": portals})
     except Exception as e:
         log.error("list_portals: %s", e)
@@ -1260,9 +1298,12 @@ def _update_task(task_id: str, *, status=None, step=None,
 def apply_job():
     """Trigger a background Playwright apply flow."""
     body = request.get_json(force=True) or {}
+    mode = body.get('mode', 'local')
+    if mode not in ('local', 'ai'):
+        return jsonify({'error': 'mode must be local or ai'}), 400
     job_url   = (body.get("url") or "").strip()
     portal_id = body.get("portal_id")
-    headless  = body.get("headless", True)
+    headless  = False if mode == 'local' else body.get("headless", True)
     dry_run   = body.get("dry_run", None)
     job_title = body.get("title", "")
     company   = body.get("company", "")
@@ -1278,6 +1319,17 @@ def apply_job():
     dry_run = dry_run is not False
     if not dry_run and body.get("submission_approved") is not True:
         return jsonify({"error": "submission_approved=true is required for live submission"}), 400
+    if portal_id and not dry_run:
+        from submission.identity import application_email
+        from submission.portal_store import portal_origin
+        portal = _portal_store().get_portal(portal_id)
+        if not portal or (application_email() and portal['username'].casefold() != application_email().casefold()):
+            return jsonify({'error': 'Select a portal login using the current application email'}), 400
+        try:
+            if portal_origin(portal['url']) != portal_origin(job_url):
+                return jsonify({'error': 'That login belongs to another portal. Choose No login or a matching portal account.'}), 400
+        except ValueError:
+            return jsonify({'error': 'Saved portal login URL is invalid'}), 400
 
     if dry_run:
         from apply_job import run_apply
@@ -1287,6 +1339,24 @@ def apply_job():
         return jsonify({"task_id": task_id, "status": "done"})
 
     task_id = _new_task({"title": job_title, "company": company, "url": job_url})
+    login_event = threading.Event()
+    with _apply_tasks_lock:
+        _apply_tasks[task_id]['login_event'] = login_event
+
+    def _wait_for_login():
+        login_event.clear()
+        _update_task(task_id, status='waiting_login', step='Complete login in the browser, then click Continue after login.')
+        if not login_event.wait(600):
+            raise TimeoutError('Portal login timed out; start again when ready')
+        _update_task(task_id, status='running', step='Continuing in the same logged-in browser…')
+
+    def _wait_for_form(missing):
+        login_event.clear()
+        labels = '; '.join(str(label)[:120] for label in missing[:8])
+        _update_task(task_id, status='waiting_form', step='Complete required fields in the browser: ' + labels)
+        if not login_event.wait(900):
+            raise TimeoutError('Application form review timed out')
+        _update_task(task_id, status='running', step='Checking completed form before submission…')
 
     def _run():
         _update_task(task_id, status="running", step="Starting apply flow…")
@@ -1303,7 +1373,7 @@ def apply_job():
             _update_task(task_id, step="Preparing resume…")
             try:
                 from submission.apply_engine import ResumeAdapter, get_advisor
-                adapter = ResumeAdapter(advisor=get_advisor())
+                adapter = ResumeAdapter(advisor=get_advisor() if mode == 'ai' else None)
                 resume_pdf, cover_letter_pdf = adapter.prepare(
                     job_url=job_url, job_title=job_title, company=company,
                     on_step=lambda s: _update_task(task_id, step=s),
@@ -1323,11 +1393,14 @@ def apply_job():
                 credentials_path=str(ROOT / "submission" / ".secrets.env"),
                 resume_pdf_path=resume_pdf,
                 cover_letter_path=cover_letter_pdf,
-                headless=headless,
+                headless=False if portal_id else headless,
                 dry_run=dry_run,
                 submission_approved=body.get("submission_approved") is True,
                 extra_creds=extra_creds,
                 on_step=lambda s: _update_task(task_id, step=s),
+                portal_id=portal_id,
+                on_login_ready=_wait_for_login if portal_id else None,
+                on_form_ready=_wait_for_form,
             )
             result = applier.apply(job_url=job_url)
             _update_task(task_id, status="done", result=result)
@@ -1345,6 +1418,16 @@ def apply_job():
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return jsonify({"task_id": task_id, "status": "queued"})
+
+
+@app.route('/api/jobs/apply/<task_id>/continue', methods=['POST'])
+def continue_apply_login(task_id):
+    with _apply_tasks_lock:
+        task = _apply_tasks.get(task_id)
+        if not task or task.get('status') not in ('waiting_login', 'waiting_form'):
+            return jsonify({'error': 'No browser step is waiting for this task'}), 409
+        task['login_event'].set()
+    return jsonify({'ok': True})
 
 
 @app.route("/api/jobs/apply/<task_id>/status", methods=["GET"])

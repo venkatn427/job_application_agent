@@ -29,6 +29,9 @@ class ApplyFixTests(unittest.TestCase):
         for applier in (_GreenhouseApplier(), _LeverApplier()):
             for confirmed in (False, True):
                 page = Mock()
+                page.locator.return_value.count.return_value = 0
+                page.get_by_role.return_value.count.return_value = 0
+                page.evaluate.return_value = []
                 def wait(selector, **kwargs):
                     if kwargs.get('state') == 'visible' and not confirmed:
                         raise TimeoutError('validation errors remain')
